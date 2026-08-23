@@ -4,7 +4,7 @@ import type { IntegrityAuditResult } from "./integrity-types.ts";
 
 const CACHE_PREFIX = "vouchguard/scans/v3";
 const X_IDENTITY_PREFIX = "vouchguard/x-identities/v1";
-const INTEGRITY_CACHE_PREFIX = "vouchguard/integrity/v2";
+const INTEGRITY_CACHE_PREFIX = "vouchguard/integrity/v3";
 const X_IDENTITY_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface CachedXIdentity {
