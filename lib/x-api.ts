@@ -3,7 +3,7 @@ import type { AccountProfile, InvestigationCoverage } from "./types.ts";
 interface XPublicMetrics {
   followers_count?: number;
   following_count?: number;
-  tweet_count?: number;
+  post_count?: number;
   listed_count?: number;
 }
 
@@ -29,9 +29,9 @@ interface XPost {
   created_at?: string;
   conversation_id?: string;
   lang?: string;
-  referenced_tweets?: XReferencedPost[];
+  referenced_posts?: XReferencedPost[];
   public_metrics?: {
-    retweet_count?: number;
+    repost_count?: number;
     reply_count?: number;
     like_count?: number;
     quote_count?: number;
@@ -116,7 +116,7 @@ async function xGet<T>(url: URL): Promise<T> {
 }
 
 function postKind(post: XPost): XAccountSamplePost["kind"] {
-  const types = new Set((post.referenced_tweets ?? []).map((item) => item.type));
+  const types = new Set((post.referenced_posts ?? []).map((item) => item.type));
   if (types.has("replied_to")) return "reply";
   if (types.has("quoted")) return "quote";
   return "original";
@@ -188,8 +188,8 @@ export async function fetchXAccountSample(handle: string): Promise<XAccountSampl
     timelineUrl.searchParams.set("start_time", start);
     timelineUrl.searchParams.set("exclude", "retweets");
     timelineUrl.searchParams.set(
-      "tweet.fields",
-      "created_at,conversation_id,lang,public_metrics,referenced_tweets",
+      "post.fields",
+      "created_at,conversation_id,lang,public_metrics,referenced_posts",
     );
     if (paginationToken) timelineUrl.searchParams.set("pagination_token", paginationToken);
 
@@ -223,7 +223,7 @@ export async function fetchXAccountSample(handle: string): Promise<XAccountSampl
       handle: user.username,
       displayName: user.name,
       bioSummary: user.description || "No public X bio supplied.",
-      accountHistory: `X account created ${createdLabel}. ${metrics.followers_count ?? 0} followers, ${metrics.following_count ?? 0} following, ${metrics.tweet_count ?? 0} lifetime posts.`,
+      accountHistory: `X account created ${createdLabel}. ${metrics.followers_count ?? 0} followers, ${metrics.following_count ?? 0} following, ${metrics.post_count ?? 0} lifetime posts.`,
       activitySummary: `${posts.length} authored posts sampled from ${normalized.length} retrieved posts in the last 180 days.`,
     },
     coverage,
@@ -237,7 +237,7 @@ export async function fetchXAccountSample(handle: string): Promise<XAccountSampl
       verified: Boolean(user.verified),
       followers: metrics.followers_count ?? 0,
       following: metrics.following_count ?? 0,
-      totalPosts: metrics.tweet_count ?? 0,
+      totalPosts: metrics.post_count ?? 0,
       listed: metrics.listed_count ?? 0,
     },
     sampleStats: {
