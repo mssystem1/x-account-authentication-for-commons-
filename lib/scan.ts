@@ -16,7 +16,16 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
   }
 
   const demo = process.env.VOUCHGUARD_DEMO_MODE === "true";
-  const { investigation, model, xSearchCalls, webSearchCalls, retrievalMode, directTargetSources } = demo
+  const {
+    investigation,
+    model,
+    xSearchCalls,
+    webSearchCalls,
+    retrievalMode,
+    directTargetSources,
+    retrievedPosts,
+    analysisSampleSize,
+  } = demo
     ? {
         investigation: demoInvestigation(handle),
         model: "demo-grok-4.5",
@@ -24,17 +33,20 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
         webSearchCalls: 0,
         retrievalMode: "demo" as const,
         directTargetSources: 0,
+        retrievedPosts: undefined,
+        analysisSampleSize: undefined,
       }
     : await investigateWithGrok(handle);
 
   const neutralVectorDetected = isNeutralMetricVector(investigation);
   const coverage = investigation.coverage;
   const searchCalls = xSearchCalls + webSearchCalls;
+  const retrievalVerified = retrievalMode === "x-api" || retrievalMode === "demo" || searchCalls >= 1;
   const insufficient =
     !coverage.profileResolved ||
     coverage.sufficiency === "insufficient" ||
     coverage.postsObserved < 5 ||
-    searchCalls < 1 ||
+    !retrievalVerified ||
     (retrievalMode === "recovery" && directTargetSources < 1) ||
     neutralVectorDetected;
 
@@ -69,6 +81,8 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
       retrievalMode,
       directTargetSources,
       neutralVectorDetected,
+      retrievedPosts,
+      analysisSampleSize,
     },
     evidence: investigation.evidence,
     uncertainties: investigation.uncertainties,
