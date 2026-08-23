@@ -1,4 +1,9 @@
 import type { AccountProfile, InvestigationCoverage } from "./types.ts";
+import {
+  readCachedXIdentity,
+  writeCachedXIdentity,
+  type CachedXIdentity,
+} from "./storage.ts";
 
 interface XPublicMetrics {
   followers_count?: number;
@@ -47,10 +52,6 @@ interface XUserResponse {
 
 interface XTimelineResponse {
   data?: XPost[];
-  meta?: {
-    result_count?: number;
-    next_token?: string;
-  };
   errors?: Array<{ title?: string; detail?: string }>;
 }
 
@@ -70,6 +71,8 @@ export interface XAccountSample {
   coverage: InvestigationCoverage;
   posts: XAccountSamplePost[];
   rawPostsRetrieved: number;
+  identityCacheHit: boolean;
+  estimatedXReadCostUsd: number;
   account: {
     id: string;
     username: string;
@@ -90,9 +93,9 @@ export interface XAccountSample {
 }
 
 const ANALYSIS_DAYS = 180;
-const TIME_BUCKETS = 4;
-const POSTS_PER_BUCKET = 5;
-const MAX_SAMPLE_POSTS = TIME_BUCKETS * POSTS_PER_BUCKET;
+const POSTS_PER_SCAN = 5;
+const POST_READ_COST_USD = 0.005;
+const USER_READ_COST_USD = 0.01;
 
 function bearerToken(): string {
   const token = process.env.X_BEARER_TOKEN?.trim();
@@ -133,79 +136,93 @@ function daysObserved(posts: XAccountSamplePost[]): number {
 
 function buildCoverage(posts: XAccountSamplePost[]): InvestigationCoverage {
   const distinctDays = daysObserved(posts);
-  if (posts.length < 5) {
+  if (posts.length < POSTS_PER_SCAN) {
     return {
       profileResolved: true,
       postsObserved: posts.length,
       distinctDaysObserved: distinctDays,
       sufficiency: "insufficient",
-      note: `The X API resolved the profile but only ${posts.length} authored posts were available across the 180-day sampling windows.`,
+      note: `The X API resolved the profile but returned only ${posts.length} authored posts in the last ${ANALYSIS_DAYS} days.`,
     };
   }
-  if (posts.length < 12 || distinctDays < 4) {
+
+  if (distinctDays < 3) {
     return {
       profileResolved: true,
       postsObserved: posts.length,
       distinctDaysObserved: distinctDays,
       sufficiency: "limited",
-      note: `The X API supplied ${posts.length} authored posts across ${distinctDays} distinct days and multiple time windows; the result should be interpreted conservatively.`,
+      note: `The five-post quick sample is concentrated into only ${distinctDays} distinct day${distinctDays === 1 ? "" : "s"}; confidence is capped.`,
     };
   }
+
   return {
     profileResolved: true,
     postsObserved: posts.length,
     distinctDaysObserved: distinctDays,
     sufficiency: "sufficient",
-    note: `The X API supplied ${posts.length} authored posts across ${distinctDays} distinct days from four time buckets spanning 180 days.`,
+    note: `Cost-bounded quick scan using five authored posts across ${distinctDays} distinct days plus public account metadata.`,
   };
 }
 
-function buildTimeBuckets(now: Date): Array<{ start: string; end: string }> {
-  const windowMs = (ANALYSIS_DAYS * 24 * 60 * 60 * 1000) / TIME_BUCKETS;
-  const oldest = now.getTime() - ANALYSIS_DAYS * 24 * 60 * 60 * 1000;
-  const buckets: Array<{ start: string; end: string }> = [];
-
-  for (let index = 0; index < TIME_BUCKETS; index++) {
-    const start = new Date(oldest + index * windowMs);
-    const end = new Date(index === TIME_BUCKETS - 1 ? now.getTime() : oldest + (index + 1) * windowMs - 1_000);
-    buckets.push({ start: start.toISOString(), end: end.toISOString() });
-  }
-
-  return buckets;
+function identityFromUser(user: XUser): CachedXIdentity {
+  const metrics = user.public_metrics ?? {};
+  return {
+    id: user.id,
+    username: user.username,
+    name: user.name,
+    createdAt: user.created_at,
+    description: user.description,
+    protected: Boolean(user.protected),
+    verified: Boolean(user.verified),
+    followers: metrics.followers_count ?? 0,
+    following: metrics.following_count ?? 0,
+    totalPosts: metrics.post_count ?? 0,
+    listed: metrics.listed_count ?? 0,
+    resolvedAt: new Date().toISOString(),
+  };
 }
 
-async function fetchBucket(userId: string, bucket: { start: string; end: string }): Promise<XPost[]> {
-  const timelineUrl = new URL(`https://api.x.com/2/users/${userId}/tweets`);
-  timelineUrl.searchParams.set("max_results", String(POSTS_PER_BUCKET));
-  timelineUrl.searchParams.set("start_time", bucket.start);
-  timelineUrl.searchParams.set("end_time", bucket.end);
+async function resolveIdentity(handle: string): Promise<{ identity: CachedXIdentity; cacheHit: boolean }> {
+  const cached = await readCachedXIdentity(handle);
+  if (cached) return { identity: cached, cacheHit: true };
+
+  const userUrl = new URL(`https://api.x.com/2/users/by/username/${encodeURIComponent(handle)}`);
+  userUrl.searchParams.set("user.fields", "created_at,description,protected,public_metrics,verified");
+  const payload = await xGet<XUserResponse>(userUrl);
+  if (!payload.data) throw new Error(`X API could not resolve @${handle}.`);
+
+  const identity = identityFromUser(payload.data);
+  await writeCachedXIdentity(handle, identity).catch((error) => {
+    console.error("VouchGuard X identity cache write failed", error);
+  });
+  return { identity, cacheHit: false };
+}
+
+export async function fetchXAccountSample(handle: string): Promise<XAccountSample> {
+  const { identity, cacheHit } = await resolveIdentity(handle);
+  if (identity.protected) {
+    throw new Error(`@${identity.username} is protected; VouchGuard only analyzes public X activity.`);
+  }
+
+  const timelineUrl = new URL(`https://api.x.com/2/users/${identity.id}/tweets`);
+  timelineUrl.searchParams.set("max_results", String(POSTS_PER_SCAN));
+  timelineUrl.searchParams.set(
+    "start_time",
+    new Date(Date.now() - ANALYSIS_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+  );
   timelineUrl.searchParams.set("exclude", "retweets");
   timelineUrl.searchParams.set(
     "post.fields",
     "created_at,conversation_id,lang,public_metrics,referenced_posts",
   );
 
-  const payload = await xGet<XTimelineResponse>(timelineUrl);
-  return payload.data ?? [];
-}
-
-export async function fetchXAccountSample(handle: string): Promise<XAccountSample> {
-  const userUrl = new URL(`https://api.x.com/2/users/by/username/${encodeURIComponent(handle)}`);
-  userUrl.searchParams.set("user.fields", "created_at,description,protected,public_metrics,verified");
-  const userPayload = await xGet<XUserResponse>(userUrl);
-  const user = userPayload.data;
-  if (!user) throw new Error(`X API could not resolve @${handle}.`);
-  if (user.protected) throw new Error(`@${user.username} is protected; VouchGuard only analyzes public X activity.`);
-
-  const bucketResponses = await Promise.all(buildTimeBuckets(new Date()).map((bucket) => fetchBucket(user.id, bucket)));
-  const uniquePosts = new Map<string, XPost>();
-  for (const post of bucketResponses.flat()) uniquePosts.set(post.id, post);
-
-  const normalized = [...uniquePosts.values()]
+  const timeline = await xGet<XTimelineResponse>(timelineUrl);
+  const posts = (timeline.data ?? [])
     .filter((post) => Boolean(post.created_at && post.text))
     .map<XAccountSamplePost>((post) => ({
       id: post.id,
-      url: `https://x.com/${user.username}/status/${post.id}`,
+      url: `https://x.com/${identity.username}/status/${post.id}`,
       text: post.text,
       createdAt: post.created_at!,
       kind: postKind(post),
@@ -213,35 +230,38 @@ export async function fetchXAccountSample(handle: string): Promise<XAccountSampl
       lang: post.lang,
       metrics: post.public_metrics,
     }))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .slice(0, MAX_SAMPLE_POSTS);
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-  const posts = normalized;
   const coverage = buildCoverage(posts);
-  const metrics = user.public_metrics ?? {};
-  const createdLabel = user.created_at ? new Date(user.created_at).toISOString().slice(0, 10) : "unknown";
+  const createdLabel = identity.createdAt
+    ? new Date(identity.createdAt).toISOString().slice(0, 10)
+    : "unknown";
+  const estimatedXReadCostUsd =
+    posts.length * POST_READ_COST_USD + (cacheHit ? 0 : USER_READ_COST_USD);
 
   return {
     profile: {
-      handle: user.username,
-      displayName: user.name,
-      bioSummary: user.description || "No public X bio supplied.",
-      accountHistory: `X account created ${createdLabel}. ${metrics.followers_count ?? 0} followers, ${metrics.following_count ?? 0} following, ${metrics.post_count ?? 0} lifetime posts.`,
-      activitySummary: `${posts.length} authored posts retrieved from four time buckets spanning the last ${ANALYSIS_DAYS} days.`,
+      handle: identity.username,
+      displayName: identity.name,
+      bioSummary: identity.description || "No public X bio supplied.",
+      accountHistory: `X account created ${createdLabel}. ${identity.followers} followers, ${identity.following} following, ${identity.totalPosts} lifetime posts.`,
+      activitySummary: `${posts.length} recent authored posts retrieved from the last ${ANALYSIS_DAYS} days. Identity resolution ${cacheHit ? "reused the 24-hour cache" : "was refreshed from X"}.`,
     },
     coverage,
     posts,
-    rawPostsRetrieved: normalized.length,
+    rawPostsRetrieved: posts.length,
+    identityCacheHit: cacheHit,
+    estimatedXReadCostUsd,
     account: {
-      id: user.id,
-      username: user.username,
-      createdAt: user.created_at,
-      protected: Boolean(user.protected),
-      verified: Boolean(user.verified),
-      followers: metrics.followers_count ?? 0,
-      following: metrics.following_count ?? 0,
-      totalPosts: metrics.post_count ?? 0,
-      listed: metrics.listed_count ?? 0,
+      id: identity.id,
+      username: identity.username,
+      createdAt: identity.createdAt,
+      protected: identity.protected,
+      verified: identity.verified,
+      followers: identity.followers,
+      following: identity.following,
+      totalPosts: identity.totalPosts,
+      listed: identity.listed,
     },
     sampleStats: {
       replies: posts.filter((post) => post.kind === "reply").length,
