@@ -2,6 +2,10 @@ name: Deploy to Vercel
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy-vercel.yml"
 
 permissions:
   contents: read
