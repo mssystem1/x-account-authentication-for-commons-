@@ -36,16 +36,21 @@ function countXSearchCalls(response: XaiResponse): number {
   return Math.max(explicitCalls, serverToolCount);
 }
 
-export async function investigateWithGrok(handle: string): Promise<{ investigation: GrokInvestigation; model: string; xSearchCalls: number }> {
+async function runInvestigation(
+  handle: string,
+  model: string,
+  days: number,
+  maxTurns: number,
+  timeoutMs: number,
+  depth: "standard" | "fallback",
+): Promise<{ investigation: GrokInvestigation; xSearchCalls: number }> {
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) throw new Error("XAI_API_KEY is not configured.");
 
-  const model = process.env.XAI_MODEL || "grok-4.5-latest";
   const to = new Date();
-  const from = new Date(to.getTime() - 365 * 24 * 60 * 60 * 1000);
-
+  const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 55_000);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch("https://api.x.ai/v1/responses", {
@@ -56,8 +61,8 @@ export async function investigateWithGrok(handle: string): Promise<{ investigati
       },
       body: JSON.stringify({
         model,
-        input: investigationPrompt(handle, isoDate(from), isoDate(to)),
-        max_turns: 8,
+        input: investigationPrompt(handle, isoDate(from), isoDate(to), depth),
+        max_turns: maxTurns,
         tools: [
           {
             type: "x_search",
@@ -86,15 +91,41 @@ export async function investigateWithGrok(handle: string): Promise<{ investigati
     const raw = JSON.parse(responseText(payload)) as unknown;
     return {
       investigation: parseGrokInvestigation(raw, handle),
-      model,
       xSearchCalls: countXSearchCalls(payload),
     };
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("The xAI investigation timed out. Try the scan again.");
-    }
-    throw error;
   } finally {
     clearTimeout(timeout);
+  }
+}
+
+export async function investigateWithGrok(handle: string): Promise<{ investigation: GrokInvestigation; model: string; xSearchCalls: number }> {
+  if (!process.env.XAI_API_KEY) throw new Error("XAI_API_KEY is not configured.");
+  const model = process.env.XAI_MODEL || "grok-4.5-latest";
+
+  try {
+    const standard = await runInvestigation(handle, model, 180, 4, 34_000, "standard");
+    return { ...standard, model };
+  } catch (error) {
+    if (!(error instanceof Error) || error.name !== "AbortError") throw error;
+    console.warn(`VouchGuard standard xAI scan timed out for @${handle}; trying bounded fallback scan.`);
+  }
+
+  try {
+    const fallback = await runInvestigation(handle, model, 90, 2, 17_000, "fallback");
+    fallback.investigation.uncertainties = [
+      "The standard-depth X investigation exceeded its latency budget, so VouchGuard used a narrower fallback scan.",
+      ...fallback.investigation.uncertainties,
+    ].slice(0, 8);
+    fallback.investigation.confidence = Math.min(fallback.investigation.confidence, 0.68);
+    if (fallback.investigation.coverage.sufficiency === "sufficient") {
+      fallback.investigation.coverage.sufficiency = "limited";
+      fallback.investigation.coverage.note = `${fallback.investigation.coverage.note} Result downgraded to limited because it came from the bounded fallback scan.`;
+    }
+    return { ...fallback, model };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("The xAI investigation timed out at both standard and fallback depth. Try the scan again.");
+    }
+    throw error;
   }
 }
