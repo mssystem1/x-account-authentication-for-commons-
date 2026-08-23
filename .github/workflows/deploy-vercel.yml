@@ -96,7 +96,7 @@ jobs:
           set -euo pipefail
           vercel alias set '${{ steps.deploy.outputs.url }}' "$PRODUCTION_DOMAIN" --token "$VERCEL_TOKEN"
 
-      - name: Verify public Commons integrity app
+      - name: Verify public dual-axis rank auditor
         shell: bash
         run: |
           set -euo pipefail
@@ -105,7 +105,7 @@ jobs:
             ROOT_STATUS="$(curl --location --silent --output /tmp/root.html --write-out '%{http_code}' "$URL/" || true)"
             HEALTH_STATUS="$(curl --location --silent --output /tmp/health.json --write-out '%{http_code}' "$URL/api/health" || true)"
             if [ "$ROOT_STATUS" = "200" ] && [ "$HEALTH_STATUS" = "200" ]; then
-              if node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/health.json","utf8")); if(!h.ok || h.mode!=="live" || h.primaryData!=="commons-ledger" || h.xApiRequired!==false || h.methodologyVersion!=="vg-commons-2026.08.2") process.exit(1); console.log("Production health passed",h)'; then
+              if node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/health.json","utf8")); if(!h.ok || h.mode!=="live" || h.primaryData!=="commons-ledger" || h.xApiRequired!==false || h.methodologyVersion!=="vg-commons-2026.08.3") process.exit(1); console.log("Production health passed",h)'; then
                 exit 0
               fi
             fi
