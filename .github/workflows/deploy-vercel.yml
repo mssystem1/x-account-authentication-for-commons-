@@ -1,9 +1,7 @@
-name: Deploy to Vercel
+name: Emergency Vercel CLI Deploy (manual only)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
@@ -60,27 +58,6 @@ jobs:
             vercel api /v9/projects -X POST -F "name=$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/tmp/vercel-project.json
           fi
           vercel link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN"
-
-      - name: Use GitHub Actions as the single deployment source
-        shell: bash
-        run: |
-          set -euo pipefail
-          vercel git disconnect --yes --token "$VERCEL_TOKEN" || true
-          echo "Vercel Git auto-deploy is disconnected to prevent duplicate production deployments and alias races."
-
-      - name: Restore standard deployment protection
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > /tmp/protection.json <<'JSON'
-          {
-            "ssoProtection": {
-              "deploymentType": "prod_deployment_urls_and_all_previews"
-            }
-          }
-          JSON
-          vercel api "/v9/projects/$VERCEL_PROJECT_NAME" -X PATCH --input /tmp/protection.json --token "$VERCEL_TOKEN" >/tmp/protection-result.json
-          node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync("/tmp/protection-result.json","utf8")); console.log("ssoProtection", p.ssoProtection ?? null)'
 
       - name: Configure production environment
         shell: bash
