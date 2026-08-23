@@ -9,7 +9,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     env:
       VOUCHGUARD_DEMO_MODE: "true"
       NEXT_TELEMETRY_DISABLED: "1"
@@ -28,3 +28,7 @@ jobs:
         run: npm run build
       - name: E2E simulation
         run: npm run test:e2e
+      - name: Install Chromium for UI tests
+        run: npx playwright install --with-deps chromium
+      - name: Desktop and mobile UI QA
+        run: npm run test:ui
