@@ -30,7 +30,7 @@ jobs:
           console.log('Production health:', h);
           if (!h.ok || h.mode !== 'live') throw new Error('Production runtime is not healthy');
           if (h.primaryData !== 'commons-ledger' || h.xApiRequired !== false) throw new Error('Commons-ledger architecture is not live');
-          if (h.methodologyVersion !== 'vg-commons-2026.08.1') throw new Error(`Expected vg-commons-2026.08.1, got ${h.methodologyVersion}`);
+          if (h.methodologyVersion !== 'vg-commons-2026.08.2') throw new Error(`Expected vg-commons-2026.08.2, got ${h.methodologyVersion}`);
           NODE
 
           HTTP="$(curl --location --silent --show-error --output /tmp/audit.json --write-out '%{http_code}' \
@@ -59,8 +59,11 @@ jobs:
           if (r.mode !== 'live') throw new Error('Not a live audit');
           if (typeof r.metrics?.integrityScore !== 'number') throw new Error('Missing Commons Integrity score');
           if (!r.stats || typeof r.stats.uniqueVouchers !== 'number') throw new Error('Missing Commons network stats');
+          if (typeof r.stats.netLedgerImpact !== 'number') throw new Error('Missing net ledger impact');
+          if (typeof r.stats.estimatedTargetBasePoints !== 'number') throw new Error('Missing estimated target base');
+          if (typeof r.stats.estimatedNetSupportShare !== 'number' || r.stats.estimatedNetSupportShare < 0 || r.stats.estimatedNetSupportShare > 1) throw new Error('Invalid estimated net support share');
           if (!Array.isArray(r.supporters)) throw new Error('Missing supporter graph rows');
           if (!Array.isArray(r.sourceEntries)) throw new Error('Missing target Commons ledger events');
           if (!r.report?.verdict) throw new Error('Missing integrity verdict');
-          if (r.methodologyVersion !== 'vg-commons-2026.08.1') throw new Error(`Unexpected methodology ${r.methodologyVersion}`);
+          if (r.methodologyVersion !== 'vg-commons-2026.08.2') throw new Error(`Unexpected methodology ${r.methodologyVersion}`);
           NODE
