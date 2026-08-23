@@ -106,13 +106,17 @@ jobs:
           echo "url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
           echo "Generated production deployment: $DEPLOYMENT_URL"
 
-      - name: Assign canonical production alias
+      - name: Repair canonical production alias
         shell: bash
         run: |
           set -euo pipefail
           DEPLOYMENT_URL='${{ steps.deploy.outputs.url }}'
-          echo "Assigning $PRODUCTION_DOMAIN to $DEPLOYMENT_URL"
+          echo "Recreating alias $PRODUCTION_DOMAIN for $DEPLOYMENT_URL"
+          vercel alias rm "$PRODUCTION_DOMAIN" --yes --token "$VERCEL_TOKEN" || true
+          sleep 3
           vercel alias set "$DEPLOYMENT_URL" "$PRODUCTION_DOMAIN" --token "$VERCEL_TOKEN"
+          echo "Current aliases:"
+          vercel alias ls --limit 100 --token "$VERCEL_TOKEN"
 
       - name: Verify generated deployment
         shell: bash
@@ -142,9 +146,6 @@ jobs:
               node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/health.json","utf8")); if(!h.ok || h.mode!=="live" || !h.xaiConfigured || h.storage!=="vercel-blob") { console.error("Invalid production health", h); process.exit(1); } console.log("Canonical production URL, xAI config, and Blob storage passed", h)'
               exit 0
             fi
-            if grep -q '404: NOT_FOUND' /tmp/root.html 2>/dev/null; then
-              echo "Canonical alias still returns Vercel NOT_FOUND; retrying while alias propagates."
-            fi
             sleep 5
           done
           echo "Canonical production URL failed validation: https://$PRODUCTION_DOMAIN"
@@ -163,4 +164,4 @@ jobs:
           echo "Canonical: https://$PRODUCTION_DOMAIN" >> "$GITHUB_STEP_SUMMARY"
           echo "Generated deployment: ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
 
-# canonical alias validation trigger
+# canonical alias recreation validation trigger
