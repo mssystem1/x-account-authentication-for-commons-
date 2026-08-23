@@ -66,6 +66,8 @@ export function ResultPanel({ result, standalone = false }: { result: ScanResult
         <div className="context-row"><span>Retrieval</span><strong>{retrievalLabel(result)}</strong></div>
         {typeof result.diagnostics.retrievedPosts === "number" && <div className="context-row"><span>Posts retrieved</span><strong>{result.diagnostics.retrievedPosts}</strong></div>}
         {typeof result.diagnostics.analysisSampleSize === "number" && <div className="context-row"><span>Analysis sample</span><strong>{result.diagnostics.analysisSampleSize}</strong></div>}
+        {typeof result.diagnostics.identityCacheHit === "boolean" && <div className="context-row"><span>X identity lookup</span><strong>{result.diagnostics.identityCacheHit ? "cached" : "fresh"}</strong></div>}
+        {typeof result.diagnostics.estimatedXReadCostUsd === "number" && <div className="context-row"><span>Est. X read cost</span><strong>${result.diagnostics.estimatedXReadCostUsd.toFixed(3)}</strong></div>}
         <div className="context-row"><span>Data coverage</span><strong>{result.coverage.postsObserved} posts · {result.coverage.distinctDaysObserved} days</strong></div>
         <div className="context-row"><span>Coverage status</span><strong>{result.coverage.sufficiency}</strong></div>
         {result.diagnostics.retrievalMode !== "x-api" && result.diagnostics.retrievalMode !== "demo" && <div className="context-row"><span>Search calls</span><strong>{result.diagnostics.xSearchCalls} X</strong></div>}
