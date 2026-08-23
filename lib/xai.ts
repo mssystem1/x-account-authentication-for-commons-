@@ -8,6 +8,9 @@ interface XaiResponse {
     type?: string;
     content?: Array<{ type?: string; text?: string }>;
   }>;
+  usage?: {
+    num_server_side_tools_used?: number;
+  };
   error?: { message?: string };
 }
 
@@ -25,13 +28,21 @@ function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-export async function investigateWithGrok(handle: string): Promise<{ investigation: GrokInvestigation; model: string }> {
+function countXSearchCalls(response: XaiResponse): number {
+  const explicitCalls = (response.output ?? []).filter((item) => item.type === "x_search_call").length;
+  const serverToolCount = typeof response.usage?.num_server_side_tools_used === "number"
+    ? response.usage.num_server_side_tools_used
+    : 0;
+  return Math.max(explicitCalls, serverToolCount);
+}
+
+export async function investigateWithGrok(handle: string): Promise<{ investigation: GrokInvestigation; model: string; xSearchCalls: number }> {
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) throw new Error("XAI_API_KEY is not configured.");
 
   const model = process.env.XAI_MODEL || "grok-4.5-latest";
   const to = new Date();
-  const from = new Date(to.getTime() - 180 * 24 * 60 * 60 * 1000);
+  const from = new Date(to.getTime() - 365 * 24 * 60 * 60 * 1000);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 55_000);
@@ -46,9 +57,11 @@ export async function investigateWithGrok(handle: string): Promise<{ investigati
       body: JSON.stringify({
         model,
         input: investigationPrompt(handle, isoDate(from), isoDate(to)),
+        max_turns: 8,
         tools: [
           {
             type: "x_search",
+            allowed_x_handles: [handle],
             from_date: isoDate(from),
             to_date: isoDate(to),
           },
@@ -71,7 +84,11 @@ export async function investigateWithGrok(handle: string): Promise<{ investigati
     }
 
     const raw = JSON.parse(responseText(payload)) as unknown;
-    return { investigation: parseGrokInvestigation(raw, handle), model };
+    return {
+      investigation: parseGrokInvestigation(raw, handle),
+      model,
+      xSearchCalls: countXSearchCalls(payload),
+    };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error("The xAI investigation timed out. Try the scan again.");
