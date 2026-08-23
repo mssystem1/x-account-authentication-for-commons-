@@ -5,13 +5,14 @@ export default function MethodologyPage() {
       <article className="methodology page-width">
         <p className="eyebrow">METHODOLOGY · VG-2026.08.6</p>
         <h1>Account behavior, not one post.</h1>
-        <p className="lead">In production, VouchGuard resolves the exact public account and retrieves authored posts through the official X API. A representative post sample is then analyzed by Grok 4.5. The displayed scores are computed in application code, not chosen by the model.</p>
+        <p className="lead">In production, VouchGuard resolves the exact public account and retrieves authored posts through the official X API. A time-distributed post sample is then analyzed by Grok 4.5. The displayed scores are computed in application code, not chosen by the model.</p>
 
         <h2>How evidence is collected</h2>
         <div className="method-grid">
           <div><strong>Exact identity</strong><p>The X API resolves the requested username to a concrete user ID before analysis starts.</p></div>
           <div><strong>Authored posts only</strong><p>The user-post timeline provides content authored by that account rather than posts that merely mention the handle.</p></div>
-          <div><strong>History, not one burst</strong><p>VouchGuard can retrieve up to 300 recent authored posts and samples up to 30 across the retrieved history.</p></div>
+          <div><strong>History, not one burst</strong><p>The 180-day window is divided into four time buckets. VouchGuard retrieves up to five authored posts from each bucket, giving a maximum 20-post sample spread across time.</p></div>
+          <div><strong>Cost bounded</strong><p>The X retrieval budget is capped per fresh scan rather than downloading hundreds of posts. Cached scored results are reused for subsequent scans.</p></div>
           <div><strong>Replies are useful</strong><p>Replies are retained because conversation quality and reciprocal behavior are important signals. Reposts are excluded.</p></div>
           <div><strong>Trusted source URLs</strong><p>Evidence links shown by the model are restricted to post URLs that were actually supplied in the X API dataset.</p></div>
           <div><strong>Fallback behavior</strong><p>If official X API retrieval is unavailable, bounded native Grok X Search can be used, but insufficient retrieval produces UNSCORABLE rather than invented scores.</p></div>
@@ -53,7 +54,8 @@ Sybil Risk =
         <h2>Data-sufficiency rules</h2>
         <ul>
           <li>VouchGuard refuses to score when the exact profile cannot be resolved or fewer than five authored posts are available.</li>
-          <li>Limited post/day coverage caps model confidence.</li>
+          <li>Five to eleven sampled posts, or a sample spanning fewer than four distinct days, is treated as limited coverage and caps model confidence.</li>
+          <li>Twelve or more sampled posts across at least four distinct days can qualify as sufficient coverage.</li>
           <li>An all-neutral model vector around 50 is treated as a retrieval/model failure, not a real assessment.</li>
           <li>Unscorable results are not cached, so temporary retrieval problems can be retried.</li>
         </ul>
