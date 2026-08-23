@@ -1,0 +1,91 @@
+name: Live production validation
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Wait for production and validate live scan
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE="https://vouchguard-ai.vercel.app"
+
+          echo "Waiting for fresh production domain..."
+          READY=0
+          for attempt in {1..60}; do
+            ROOT="$(curl --location --silent --output /tmp/root.html --write-out '%{http_code}' "$BASE/" || true)"
+            HEALTH="$(curl --location --silent --output /tmp/health.json --write-out '%{http_code}' "$BASE/api/health" || true)"
+            echo "Attempt $attempt root=$ROOT health=$HEALTH"
+            if [ "$ROOT" = "200" ] && [ "$HEALTH" = "200" ]; then
+              if node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/health.json","utf8")); if (!h.ok || h.mode!=="live" || !h.xaiConfigured) process.exit(1);'; then
+                READY=1
+                break
+              fi
+            fi
+            sleep 10
+          done
+
+          if [ "$READY" != "1" ]; then
+            echo "Production never became reachable."
+            echo "Root response:"
+            head -c 600 /tmp/root.html || true
+            echo
+            echo "Health response:"
+            head -c 600 /tmp/health.json || true
+            exit 1
+          fi
+
+          echo "Production health:"
+          cat /tmp/health.json
+          echo
+
+          echo "Running real forced scan for @natalia77351991..."
+          HTTP="$(curl --location --silent --show-error --output /tmp/scan.json --write-out '%{http_code}' \
+            -X POST "$BASE/api/scan" \
+            -H 'Content-Type: application/json' \
+            --data '{"handle":"natalia77351991","refresh":true}')"
+          echo "Scan HTTP=$HTTP"
+          if [ "$HTTP" != "200" ]; then
+            cat /tmp/scan.json
+            exit 1
+          fi
+
+          node <<'NODE'
+          const fs = require('fs');
+          const r = JSON.parse(fs.readFileSync('/tmp/scan.json','utf8'));
+          console.log(JSON.stringify({
+            handle: r.handle,
+            mode: r.mode,
+            model: r.model,
+            recommendation: r.recommendation,
+            scores: r.scores,
+            confidence: r.confidence,
+            coverage: r.coverage,
+            diagnostics: r.diagnostics,
+            sourceCount: Array.isArray(r.sourceUrls) ? r.sourceUrls.length : null,
+            evidenceCount: Array.isArray(r.evidence) ? r.evidence.length : null,
+            summary: r.summary
+          }, null, 2));
+
+          if (r.handle !== 'natalia77351991') throw new Error('Wrong account returned');
+          if (r.mode !== 'live') throw new Error('Production is not in live mode');
+
+          if (r.scores) {
+            const values = [r.scores.authenticity, r.scores.farmerRisk, r.scores.botRisk, r.scores.sybilRisk, r.scores.vouchConfidence];
+            const allFifty = values.every(v => v === 50);
+            if (allFifty) throw new Error('Regression: fake all-50 score vector returned');
+            if (r.diagnostics?.neutralVectorDetected) throw new Error('Neutral-vector diagnostic unexpectedly true for scored result');
+            if (!r.coverage || r.coverage.postsObserved < 5) throw new Error('Scored result lacks minimum direct-account coverage');
+          } else {
+            if (r.recommendation !== 'UNSCORABLE') throw new Error('Missing scores must be explicitly UNSCORABLE');
+            console.log('No fake score emitted: production correctly returned UNSCORABLE due to insufficient X evidence.');
+          }
+          NODE
