@@ -5,7 +5,7 @@ import type { CommonsLedger, IntegrityAuditResult } from "./integrity-types.ts";
 import { appOrigin, normalizeHandle } from "./utils.ts";
 import { isFreshIntegrityAudit, readIntegrityAudit, writeIntegrityAudit } from "./storage.ts";
 
-export const INTEGRITY_METHODOLOGY_VERSION = "vg-commons-2026.08.1";
+export const INTEGRITY_METHODOLOGY_VERSION = "vg-commons-2026.08.2";
 const MAX_SECOND_HOP = 40;
 const CONCURRENCY = 6;
 
@@ -54,7 +54,7 @@ function demoLedger(handle: string): { target: CommonsLedger; supporterLedgers: 
     tweetUrl: null,
     createdAt: new Date(now - (risky ? index * 2 * 60_000 : index * 8 * 60 * 60_000)).toISOString(),
   }));
-  const target: CommonsLedger = { handle, display: `@${handle}`, rank: risky ? 118 : 642, totalPoints: risky ? 410000 : 188000, entries };
+  const target: CommonsLedger = { handle, display: `@${handle}`, rank: risky ? 118 : 642, totalPoints: risky ? 410000 : 488000, entries };
   const supporterLedgers = new Map<string, CommonsLedger | null>();
   for (let index = 0; index < voucherCount; index++) {
     const supporter = entries[index]!;
@@ -84,7 +84,7 @@ export async function auditCommonsCreator(input: string, refresh = false): Promi
 
   if (!refresh) {
     const cached = await readIntegrityAudit(handle);
-    if (cached && isFreshIntegrityAudit(cached)) {
+    if (cached && cached.methodologyVersion === INTEGRITY_METHODOLOGY_VERSION && isFreshIntegrityAudit(cached)) {
       return { ...cached, cached: true, permalink: `${appOrigin()}/u/${handle}` };
     }
   }
