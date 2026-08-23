@@ -49,6 +49,13 @@ export function demoInvestigation(handle: string): GrokInvestigation {
       accountHistory: "Demo mode uses deterministic synthetic behavior and never calls xAI.",
       activitySummary: isBot ? "Highly repetitive simulated activity." : isFarmer ? "Campaign-heavy simulated activity." : "Mixed original posts and conversations in the simulated history.",
     },
+    coverage: {
+      profileResolved: true,
+      postsObserved: 48,
+      distinctDaysObserved: 18,
+      sufficiency: "sufficient",
+      note: "Synthetic demo coverage for end-to-end testing.",
+    },
     metrics,
     evidence: items,
     summary: isBot || isSybil
