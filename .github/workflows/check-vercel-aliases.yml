@@ -19,15 +19,19 @@ jobs:
           set -u
           URLS=(
             "https://vouchguard-ai.vercel.app"
+            "https://vouchguard-commons-ai.vercel.app"
             "https://vouchguard-ai-maksims-projects-209202f7.vercel.app"
             "https://vouchguard-ai-git-main-maksims-projects-209202f7.vercel.app"
-            "https://vouchguard-o877bjh4i-maksims-projects-209202f7.vercel.app"
           )
           for URL in "${URLS[@]}"; do
             echo "=== $URL ==="
+            echo "-- direct response --"
+            curl --silent --show-error --head "$URL/api/health" | sed -n '1,12p' || true
             ROOT="$(curl --location --silent --output /tmp/root --write-out '%{http_code}' "$URL/" || true)"
             HEALTH="$(curl --location --silent --output /tmp/health --write-out '%{http_code}' "$URL/api/health" || true)"
-            echo "root=$ROOT health=$HEALTH"
-            echo "root-body: $(head -c 180 /tmp/root 2>/dev/null || true)"
-            echo "health-body: $(head -c 500 /tmp/health 2>/dev/null || true)"
+            CONTENT_TYPE="$(curl --location --silent --output /dev/null --write-out '%{content_type}' "$URL/api/health" || true)"
+            TITLE="$(grep -o -m1 '<title>[^<]*</title>' /tmp/health 2>/dev/null || true)"
+            echo "followed: root=$ROOT health=$HEALTH content-type=$CONTENT_TYPE"
+            echo "title=$TITLE"
+            echo "health-prefix: $(head -c 220 /tmp/health 2>/dev/null || true)"
           done
