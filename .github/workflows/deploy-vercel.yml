@@ -13,10 +13,11 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
       VERCEL_PROJECT_NAME: vouchguard-ai
       PRODUCTION_DOMAIN: vouchguard-ai.vercel.app
     steps:
@@ -32,6 +33,7 @@ jobs:
           set -euo pipefail
           test -n "$VERCEL_TOKEN" || { echo "VERCEL_TOKEN is missing"; exit 1; }
           test -n "$XAI_API_KEY" || { echo "XAI_API_KEY is missing"; exit 1; }
+          test -n "$X_BEARER_TOKEN" || { echo "X_BEARER_TOKEN is missing"; exit 1; }
           echo "Required deployment credentials are configured."
 
       - name: Install application dependencies
@@ -64,6 +66,7 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$XAI_API_KEY" > /tmp/xai-key
+          printf '%s' "$X_BEARER_TOKEN" > /tmp/x-bearer
           printf '%s' 'grok-4.5-latest' > /tmp/xai-model
           printf '%s' '21600' > /tmp/cache-ttl
           printf '%s' '12' > /tmp/rate-limit
@@ -71,12 +74,13 @@ jobs:
           printf '%s' "https://$PRODUCTION_DOMAIN" > /tmp/app-url
 
           vercel env add XAI_API_KEY production --sensitive --force --token "$VERCEL_TOKEN" < /tmp/xai-key
+          vercel env add X_BEARER_TOKEN production --sensitive --force --token "$VERCEL_TOKEN" < /tmp/x-bearer
           vercel env add XAI_MODEL production --force --token "$VERCEL_TOKEN" < /tmp/xai-model
           vercel env add SCAN_CACHE_TTL_SECONDS production --force --token "$VERCEL_TOKEN" < /tmp/cache-ttl
           vercel env add SCAN_RATE_LIMIT_PER_MINUTE production --force --token "$VERCEL_TOKEN" < /tmp/rate-limit
           vercel env add VOUCHGUARD_DEMO_MODE production --force --token "$VERCEL_TOKEN" < /tmp/demo-mode
           vercel env add NEXT_PUBLIC_APP_URL production --no-sensitive --force --token "$VERCEL_TOKEN" < /tmp/app-url
-          rm -f /tmp/xai-key /tmp/xai-model /tmp/cache-ttl /tmp/rate-limit /tmp/demo-mode /tmp/app-url
+          rm -f /tmp/xai-key /tmp/x-bearer /tmp/xai-model /tmp/cache-ttl /tmp/rate-limit /tmp/demo-mode /tmp/app-url
 
       - name: Ensure Vercel Blob store exists
         shell: bash
@@ -117,21 +121,16 @@ jobs:
             echo "Attempt $attempt: root=$ROOT_STATUS health=$HEALTH_STATUS content-type=$CONTENT_TYPE"
 
             if [ "$ROOT_STATUS" = "200" ] && [ "$HEALTH_STATUS" = "200" ] && [[ "$CONTENT_TYPE" == application/json* ]]; then
-              node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/health.json","utf8")); if(!h.ok || h.mode!=="live" || !h.xaiConfigured || h.storage!=="vercel-blob") { console.error("Invalid production health", h); process.exit(1); } console.log("Production health passed", h)'
+              node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/health.json","utf8")); if(!h.ok || h.mode!=="live" || !h.xaiConfigured || !h.xApiConfigured || h.retrieval!=="official-x-api" || h.storage!=="vercel-blob") { console.error("Invalid production health", h); process.exit(1); } console.log("Production health passed", h)'
               if grep -qi '<html' /tmp/root.html; then
                 echo "Public application and API are reachable."
                 exit 0
               fi
             fi
-
-            if grep -q 'NOT_FOUND' /tmp/root.html 2>/dev/null; then
-              echo "Vercel edge is still returning platform NOT_FOUND; retrying."
-            fi
             sleep 5
           done
 
           echo "Public production validation failed: https://$PRODUCTION_DOMAIN"
-          echo "This gate intentionally fails if Vercel reports a Ready deployment but its edge does not route the public domain."
           head -c 500 /tmp/root.html || true
           echo
           head -c 500 /tmp/health.json || true
