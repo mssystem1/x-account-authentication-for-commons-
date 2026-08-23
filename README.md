@@ -2,94 +2,84 @@
 
 > **Scan before you vouch.** Account-level X intelligence for Commons vouch/slash decisions.
 
-VouchGuard AI analyzes an **entire public X account** before a user spends a scarce Commons action. Production retrieval is deterministic: the app resolves the account and retrieves authored posts with the **official X API**, then sends a bounded representative sample to **Grok 4.5** for behavioral analysis. VouchGuard itself computes the final scores from Grok's structured sub-signals.
+VouchGuard AI is a responsive Next.js application that evaluates a **public X account as a whole** before a user spends a scarce Commons action.
 
-The product exposes four independent dimensions:
+Production uses a hybrid architecture:
 
-- **Authenticity** — continuity of identity, original activity, meaningful conversation and persistent interests/projects.
-- **Farmer Risk** — behavior heavily optimized around campaigns, points, rewards, reciprocal support, quests, airdrops or vouch farming.
-- **Bot Risk** — automation-like cadence, templating, mechanically repeated activity or implausible timing.
-- **Sybil Risk** — coordination/closed-cluster behavioral risk. This is **not** proof that one operator owns multiple accounts.
+1. The **official X API** resolves the exact account and retrieves a bounded, time-distributed sample of authored posts.
+2. **Grok 4.5** analyzes that deterministic dataset for behavioral patterns.
+3. VouchGuard's own TypeScript scoring engine computes the final metrics.
+4. The user reviews evidence and decides whether to **Vouch**, **Skip**, or **Review for Slash**.
 
-A fifth metric, **Vouch Confidence**, summarizes the decision context. The final choice remains human-controlled: **Vouch**, **Skip**, or **Review for Slash**.
+The public metrics are deliberately separate:
 
-VouchGuard never posts to X automatically and never automatically slashes anyone.
+- **Authenticity** — continuity of identity, original expression, meaningful conversations and persistent interests/projects.
+- **Farmer Risk** — behavior heavily optimized around rewards, points, quests, airdrops, reciprocal engagement or vouch farming.
+- **Bot Risk** — automation-like cadence, mechanical templating, repeated replies or implausible activity patterns.
+- **Sybil Risk** — evidence of coordinated/closed-network behavior. This is a risk signal, **not proof of shared ownership**.
+- **Vouch Confidence** — a decision-support summary derived from the four metrics above.
 
----
-
-## Why this product exists
-
-Commons gives users Vouch and Slash primitives, but users still have to answer:
-
-> **What kind of account am I about to support or penalize?**
-
-Judging one Commons post is not useful because required command syntax and campaign posts are naturally repetitive. VouchGuard evaluates **account-level behavior** instead.
-
-The core production flow is:
-
-```text
-Official X API
-  ↓
-Resolve exact account + retrieve authored posts
-  ↓
-Deterministic representative sample
-  ↓
-Grok 4.5 behavioral analysis
-  ↓
-Structured sub-signals + evidence URLs
-  ↓
-Deterministic VouchGuard scoring
-  ↓
-Human reviews evidence
-  ↓
-Vouch / Skip / Review for Slash
-```
-
-If `X_BEARER_TOKEN` is not configured, VouchGuard can fall back to xAI native X Search. That fallback exists for resilience/development, but the **official X API is the recommended production retrieval path** because native X Search can have coverage gaps for individual accounts.
+VouchGuard never posts automatically and never automatically slashes an account.
 
 ---
 
-## Product workflow
+## Why VouchGuard exists
+
+Commons gives users the ability to Vouch and Slash, but the difficult part is deciding **what kind of account is behind a handle**.
+
+A single Commons post is a poor signal. Required command syntax is repetitive, real humans participate in campaigns, and a genuine person may also farm incentives. VouchGuard therefore evaluates account-level behavior instead of judging one post or one keyword.
+
+The product also distinguishes:
+
+- a genuine human from an automated account;
+- a genuine human who farms incentives from a bot;
+- weak/sparse evidence from actual suspicious evidence;
+- coordination risk from proof of Sybil ownership.
+
+If data is not good enough, VouchGuard returns **UNSCORABLE** rather than inventing a neutral-looking score.
+
+---
+
+# Product workflow
 
 ```mermaid
 flowchart LR
-    U[User enters @handle] --> API[POST /api/scan]
-    API --> C{Fresh Blob cache?}
-    C -->|Yes| R[Return assessment]
-    C -->|No| XAPI[Official X API]
-    XAPI --> USER[Resolve exact profile]
-    USER --> POSTS[Fetch up to 300 authored posts / 180d]
-    POSTS --> SAMPLE[Select up to 30 posts across time]
-    SAMPLE --> G[Grok 4.5 low-reasoning analysis]
-    G --> S[Structured behavioral sub-signals]
-    S --> E[VouchGuard deterministic scoring]
-    E --> B[(Vercel Blob cache)]
-    E --> R
-    R --> UI[Responsive result UI]
+    U[User enters X handle] --> API[POST /api/scan]
+    API --> CACHE{Fresh Blob result?}
+    CACHE -->|Yes| RESULT[Return cached assessment]
+    CACHE -->|No| XUSER[Official X API: resolve username]
+    XUSER --> XT[4 time buckets across 180 days]
+    XT --> POSTS[Up to 5 authored posts per bucket]
+    POSTS --> DATA[Max 20-post deterministic dataset]
+    DATA --> GROK[Grok 4.5 low-reasoning analysis]
+    GROK --> SIGNALS[Structured behavioral sub-signals]
+    SIGNALS --> SCORE[VouchGuard scoring engine]
+    SCORE --> STORE[(Vercel Blob)]
+    SCORE --> RESULT
+    RESULT --> UI[Responsive evidence UI]
     UI --> V[Vouch on X]
-    UI --> K[Skip]
-    UI --> SR[Review evidence for Slash]
-    SR --> X[Compose slash on X]
+    UI --> S[Skip]
+    UI --> R[Review for Slash]
 ```
 
-### System overview
+## System overview
 
 ```mermaid
 graph TB
-  subgraph Client[Desktop / Mobile Browser]
-    HOME[Scanner UI]
-    RESULT[Assessment UI]
-    PUBLIC[Public /u/:handle result]
+  subgraph Browser[Desktop / Mobile]
+    HOME[Scanner]
+    ASSESSMENT[Assessment]
+    PUBLIC[Public /u/:handle page]
   end
 
-  subgraph Vercel[Vercel / Next.js]
-    SCAN[API /api/scan]
-    HEALTH[API /api/health]
-    RATE[Rate limiter]
-    XADAPTER[X API adapter]
-    SAMPLE[Sampling layer]
-    ENGINE[Deterministic scoring engine]
-    STORE[Vercel Blob adapter]
+  subgraph Vercel[Next.js on Vercel]
+    SCAN[/api/scan]
+    HEALTH[/api/health]
+    RL[Rate limiter]
+    XA[X API adapter]
+    ORCH[Scan orchestrator]
+    ENGINE[Deterministic scoring]
+    BLOB[Vercel Blob cache]
   end
 
   subgraph X[X Platform]
@@ -98,93 +88,129 @@ graph TB
   end
 
   subgraph xAI[xAI]
-    RESP[Responses API]
-    GROK[Grok 4.5]
+    RESPONSE[Responses API]
+    GROK45[Grok 4.5]
     XSEARCH[Native X Search fallback]
   end
 
   HOME --> SCAN
-  SCAN --> RATE
-  SCAN --> STORE
-  SCAN --> XADAPTER
-  XADAPTER --> LOOKUP
-  XADAPTER --> TIMELINE
-  TIMELINE --> SAMPLE
-  SAMPLE --> RESP
-  RESP --> GROK
-  GROK --> ENGINE
-  SCAN -. no X Bearer Token .-> XSEARCH
-  XSEARCH --> GROK
-  ENGINE --> STORE
-  ENGINE --> RESULT
-  STORE --> PUBLIC
+  SCAN --> RL
+  SCAN --> BLOB
+  SCAN --> ORCH
+  ORCH --> XA
+  XA --> LOOKUP
+  XA --> TIMELINE
+  TIMELINE --> RESPONSE
+  RESPONSE --> GROK45
+  GROK45 --> ENGINE
+  ORCH -. no X_BEARER_TOKEN .-> XSEARCH
+  XSEARCH --> GROK45
+  ENGINE --> BLOB
+  ENGINE --> ASSESSMENT
+  BLOB --> PUBLIC
   HEALTH --> HOME
 ```
 
 ---
 
-## Retrieval and sampling
+# Production retrieval
 
-### Primary: official X API
+## Primary path: official X API
 
-With `X_BEARER_TOKEN` configured, VouchGuard:
+Set `X_BEARER_TOKEN` in production. VouchGuard then:
 
-1. Resolves `@handle` using `GET /2/users/by/username/:username`.
-2. Rejects protected accounts because VouchGuard only evaluates public activity.
-3. Reads the user's authored-post timeline with `GET /2/users/:id/tweets`.
-4. Excludes reposts while keeping original posts, replies and quote posts.
-5. Retrieves up to three pages / 300 posts within the last 180 days.
-6. Samples up to 30 posts spread across the retrieved history instead of using only the newest burst.
-7. Sends that fixed dataset to Grok.
+1. Resolves the username with `GET /2/users/by/username/:username`.
+2. Rejects protected accounts because only public account behavior can be evaluated.
+3. Splits the last **180 days into four time buckets**.
+4. Calls `GET /2/users/:id/tweets` for each bucket.
+5. Requests at most **5 authored posts per bucket**.
+6. Excludes reposts while retaining originals, replies and quote posts.
+7. Produces a maximum **20-post sample** distributed through time.
+8. Sends that exact dataset to Grok.
 
-This makes account resolution, post counts, dates and URLs deterministic rather than LLM-generated.
+This avoids the major failure mode of asking an LLM to both discover the account and judge it.
 
-### Fallback: xAI native X Search
+### Why time buckets?
 
-If `X_BEARER_TOKEN` is absent, the app uses bounded Grok X Search:
+Fetching only the newest posts can misclassify an account that recently joined a campaign. Fetching hundreds of posts is expensive. Four historical buckets give the model evidence from multiple parts of the six-month window while keeping cost bounded.
 
-- exact-handle scoped attempt first;
-- unscoped exact-author recovery if scoped search has insufficient coverage;
-- low reasoning effort and strict latency budgets;
-- never converts missing retrieval into neutral `50` scores.
+At X's current published pay-per-use rates, a fresh maximum-size retrieval is approximately:
 
-If retrieval remains insufficient, the UI shows **UNSCORABLE** rather than fabricated metrics.
+```text
+20 Post reads × $0.005 = $0.100
+1 User read  × $0.010 = $0.010
+--------------------------------
+Maximum X-side raw retrieval ≈ $0.11 / fresh scan
+```
 
----
+This excludes xAI/Grok cost. Vercel Blob caching reduces repeat work, and X currently deduplicates the same resources within a UTC day in most cases.
 
-## Grok 4.5 analysis
+## Fallback path: xAI native X Search
 
-The production Grok call analyzes the deterministic X API sample with:
+If `X_BEARER_TOKEN` is absent, VouchGuard can use native xAI X Search:
 
-- model: `grok-4.5-latest` by default;
-- `reasoning: { effort: "low" }` for bounded latency;
-- strict JSON-schema structured output;
-- no external tool calls when official X data is available;
-- explicit prompt-injection isolation: post text is untrusted content, never instructions;
-- evidence URLs restricted to URLs that were present in the supplied X API sample.
+1. exact-handle scoped attempt;
+2. unscoped exact-author recovery attempt if necessary;
+3. low reasoning effort and hard latency limits.
 
-Grok does **not** decide the final VouchGuard score. It returns these sub-signals:
-
-### Positive sub-signals
-
-- `contentOriginality`
-- `identityContinuity`
-- `engagementQuality`
-- `socialDiversity`
-
-### Risk sub-signals
-
-- `campaignConcentration`
-- `reciprocityPressure`
-- `automationPattern`
-- `temporalAnomalies`
-- `networkCoordination`
+This is a resilience/development path, **not the recommended production path**. Production testing showed that native X Search can have account-specific retrieval gaps.
 
 ---
 
-## Scoring methodology
+# Grok analysis
 
-The scoring engine lives in `lib/scoring.ts` and is separate from the LLM.
+When official X API data is available, Grok does **not** search the internet or X. It receives a fixed dataset containing:
+
+- account metadata;
+- X account creation date and public metrics;
+- coverage information;
+- post URLs;
+- timestamps;
+- original/reply/quote classification;
+- post text;
+- public engagement metrics.
+
+The request uses:
+
+```text
+model: grok-4.5-latest
+reasoning.effort: low
+structured JSON schema: strict
+external tools: none
+```
+
+Post text is explicitly treated as **untrusted data**, not as instructions. Evidence URLs returned by Grok are filtered so only URLs that were supplied in the official X dataset can reach the UI.
+
+Grok returns nine sub-signals.
+
+### Positive signals
+
+```text
+contentOriginality
+identityContinuity
+engagementQuality
+socialDiversity
+```
+
+### Risk signals
+
+```text
+campaignConcentration
+reciprocityPressure
+automationPattern
+temporalAnomalies
+networkCoordination
+```
+
+Grok does **not** choose the final VouchGuard score or Commons action.
+
+---
+
+# Scoring
+
+Current methodology version: **`vg-2026.08.6`**.
+
+The formulas live in `lib/scoring.ts`.
 
 ```text
 Authenticity =
@@ -214,156 +240,205 @@ Sybil Risk =
   + Automation × 14%
   + Reciprocity × 16%
   + Campaign Concentration × 10%
+
+Vouch Confidence =
+  Authenticity × 62%
+  + (100 − Farmer Risk) × 16%
+  + (100 − Bot Risk) × 10%
+  + (100 − Sybil Risk) × 12%
 ```
 
-Current methodology version: **`vg-2026.08.6`**.
+## Data-sufficiency guard
 
-### Data-sufficiency guard
+VouchGuard suppresses the numeric assessment when evidence is inadequate.
 
-VouchGuard will not score an account when the data is inadequate. The application suppresses the score when, among other things:
+### Insufficient
 
-- the profile cannot be resolved;
-- fewer than 5 authored posts are available to the analysis;
-- coverage is explicitly insufficient;
-- native-search retrieval did not actually execute;
-- recovery search cannot produce verifiable direct-target evidence;
-- Grok returns a suspicious all-neutral placeholder vector around 50.
+- profile unresolved; or
+- fewer than 5 authored posts; or
+- retrieval did not actually execute; or
+- recovery evidence cannot be verified; or
+- Grok produces an all-neutral placeholder vector around 50.
 
-This prevents “could not find enough data” from looking like “50% bot / 50% farmer / 50% Sybil.”
+Result:
+
+```json
+{
+  "scores": null,
+  "recommendation": "UNSCORABLE"
+}
+```
+
+### Limited
+
+Five to eleven posts, or fewer than four distinct activity days. Confidence is capped.
+
+### Sufficient
+
+Twelve or more sampled posts across at least four distinct days can qualify as sufficient account-level coverage.
+
+The data gate is intentionally separate from risk. **Missing evidence is not negative evidence.**
 
 ---
 
-## UI / UX
+# UI / UX
 
-The homepage intentionally has one primary task: enter an X handle and scan it.
+The product is intentionally centered on one action:
 
-The result screen shows:
+```text
+@username → Scan account
+```
+
+The assessment screen shows:
 
 - Vouch Confidence;
 - Authenticity;
 - Farmer Risk;
 - Bot Risk;
 - Sybil Risk;
-- retrieval source (`Official X API`, scoped X Search, recovery X Search or demo);
-- posts retrieved and analysis-sample size when using the X API;
+- AI confidence;
+- retrieval mode;
+- posts retrieved / analysis sample size;
 - coverage status;
-- model confidence;
-- evidence observations and public X source links;
+- account history/activity summary;
+- evidence cards;
+- source links;
 - uncertainties;
-- Vouch / Skip / Review-for-Slash actions.
+- Commons action buttons.
 
-### Slash safety UX
+## Actions
 
-A high-risk result does **not** say “this person is a Sybil.” It reports probabilistic signals. Before a slash composer is enabled, the user must explicitly confirm that they reviewed the evidence.
+### Vouch
 
----
+Opens an X composer containing the Commons vouch command. The app does not post automatically.
 
-## Data storage
+### Skip
 
-No relational database is required.
+No external action.
 
-With `BLOB_READ_WRITE_TOKEN`, Vercel Blob stores scored scan results under:
+### Review for Slash
 
-```text
-vouchguard/scans/v2/<handle>.json
-```
+The user first sees evidence and must check:
 
-Blob provides:
+> I reviewed the evidence and will make my own decision.
 
-- reuse of expensive scans;
-- lower X API/xAI spend;
-- public `/u/<handle>` result pages;
-- fast repeat scans.
+Only then is the Slash composer enabled.
 
-Unscorable results are deliberately **not cached**, so a temporary retrieval failure can be retried immediately.
-
-Default cache TTL: 6 hours (`21600` seconds).
+VouchGuard does not publish “top accounts to slash” or automatically coordinate negative actions.
 
 ---
 
-## Project structure
+# Project structure
 
 ```text
 app/
   api/
-    health/route.ts       runtime/config status
-    scan/route.ts         scan endpoint
-  methodology/page.tsx   methodology UI
-  u/[handle]/page.tsx    cached public assessment
-  globals.css            responsive design system
+    health/route.ts
+    scan/route.ts
+  methodology/page.tsx
+  u/[handle]/page.tsx
+  globals.css
   layout.tsx
   page.tsx
 
 components/
-  Scanner.tsx             scan workflow/progress
-  ResultPanel.tsx         score/evidence/action UI
+  Scanner.tsx
+  ResultPanel.tsx
 
 lib/
-  demo.ts                 deterministic test simulation
-  prompt.ts               search + fixed-sample Grok prompts
-  rate-limit.ts           light API protection
-  scan.ts                 scan orchestration
-  schema.ts               strict xAI output schema + parser
-  scoring.ts              deterministic scores
-  storage.ts              Vercel Blob cache
-  types.ts                domain types
+  demo.ts
+  prompt.ts
+  rate-limit.ts
+  scan.ts
+  schema.ts
+  scoring.ts
+  storage.ts
+  types.ts
   utils.ts
-  x-api.ts                official X API retrieval + sampling
-  xai.ts                  Grok analysis + native X Search fallback
+  x-api.ts
+  xai.ts
 
 sdk/
-  index.ts                 TypeScript client
+  index.ts
+
+e2e/
+  ui.spec.ts
 
 scripts/
-  e2e-simulate.mjs        production-server demo smoke test
+  e2e-simulate.mjs
 
 .github/workflows/
-  ci.yml                   typecheck/tests/build/demo E2E
-  live-production.yml      manual real-production validation
+  ci.yml
+  live-production.yml
+  deploy-vercel.yml
+
+playwright.config.ts
 ```
 
 ---
 
-## Local setup
+# Environment variables
 
-### Prerequisites
+Create `.env.local` locally or configure the variables in Vercel.
 
-- Node.js 22.x
-- npm
-- xAI API key
-- X developer app Bearer Token for recommended live retrieval
+| Variable | Production | Purpose |
+|---|---:|---|
+| `XAI_API_KEY` | Required | Grok behavioral analysis |
+| `X_BEARER_TOKEN` | Required for recommended path | Official public X user/post retrieval |
+| `XAI_MODEL` | Optional | Defaults to `grok-4.5-latest` |
+| `BLOB_READ_WRITE_TOKEN` | Recommended | Durable cached assessment pages |
+| `SCAN_CACHE_TTL_SECONDS` | Optional | Defaults to `21600` (6 h) |
+| `SCAN_RATE_LIMIT_PER_MINUTE` | Optional | Defaults to `12` per server instance |
+| `VOUCHGUARD_DEMO_MODE` | Optional | Must be `false` in production |
+| `NEXT_PUBLIC_APP_URL` | Recommended | Canonical share/permalink origin |
+
+Never expose the X, xAI or Blob secrets through a `NEXT_PUBLIC_*` variable.
+
+Recommended Vercel production configuration:
+
+```text
+XAI_API_KEY=<secret>
+X_BEARER_TOKEN=<secret>
+XAI_MODEL=grok-4.5-latest
+SCAN_CACHE_TTL_SECONDS=21600
+SCAN_RATE_LIMIT_PER_MINUTE=12
+VOUCHGUARD_DEMO_MODE=false
+NEXT_PUBLIC_APP_URL=https://vouchguard-ai.vercel.app
+```
+
+Vercel Blob injects `BLOB_READ_WRITE_TOKEN` automatically when the store is connected.
+
+---
+
+# Local development
+
+Requirements:
+
+```text
+Node.js 22.x
+npm
+```
+
+Install:
 
 ```bash
 npm install
 cp .env.example .env.local
 ```
 
-### Recommended live configuration
-
-```bash
-XAI_API_KEY=xai-...
-X_BEARER_TOKEN=...
-XAI_MODEL=grok-4.5-latest
-VOUCHGUARD_DEMO_MODE=false
-```
-
-Then:
+Live mode:
 
 ```bash
 npm run dev
 ```
 
-Open `http://localhost:3000`.
-
-### Demo mode
-
-No external credentials are required:
+Demo mode, without external API usage:
 
 ```bash
 VOUCHGUARD_DEMO_MODE=true npm run dev
 ```
 
-Useful synthetic handles:
+Useful demo handles:
 
 ```text
 alice_builder
@@ -373,62 +448,11 @@ bot_swarm_01
 
 ---
 
-## Environment variables
+# API
 
-| Variable | Required | Purpose |
-|---|---:|---|
-| `XAI_API_KEY` | Live mode | Grok Responses API credential |
-| `X_BEARER_TOKEN` | Production recommended | App-only X API credential for deterministic public account/post retrieval |
-| `XAI_MODEL` | No | Defaults to `grok-4.5-latest` |
-| `BLOB_READ_WRITE_TOKEN` | Recommended | Durable Vercel Blob cache |
-| `SCAN_CACHE_TTL_SECONDS` | No | Default `21600` |
-| `SCAN_RATE_LIMIT_PER_MINUTE` | No | Default `12` per instance |
-| `VOUCHGUARD_DEMO_MODE` | No | `true` uses synthetic scans |
-| `NEXT_PUBLIC_APP_URL` | Recommended | Canonical share/permalink origin |
+## `POST /api/scan`
 
-Never expose `XAI_API_KEY`, `X_BEARER_TOKEN`, or `BLOB_READ_WRITE_TOKEN` as `NEXT_PUBLIC_*` variables.
-
----
-
-## Testing
-
-### Standard CI-equivalent validation
-
-```bash
-npm run typecheck
-npm test
-npm run build
-npm run test:e2e
-```
-
-The demo E2E starts the production Next.js server and verifies:
-
-- `/api/health`;
-- a clean synthetic account;
-- a farming-heavy account;
-- a bot/coordination-heavy account;
-- home-page rendering.
-
-### Real production validation
-
-GitHub Actions includes **Live Production Validation** (`.github/workflows/live-production.yml`). Run it manually after production credentials are configured. It verifies:
-
-- public `/` availability;
-- `/api/health`;
-- live xAI configuration;
-- official X API retrieval configuration;
-- methodology version;
-- a real forced account scan;
-- resolved X profile;
-- minimum deterministic post coverage;
-- non-null scores;
-- no all-50 regression.
-
----
-
-## API
-
-### `POST /api/scan`
+Request:
 
 ```json
 {
@@ -437,38 +461,45 @@ GitHub Actions includes **Live Production Validation** (`.github/workflows/live-
 }
 ```
 
-A successful scored response includes:
+Representative scored response:
 
 ```json
 {
   "handle": "mssystem1",
   "scores": {
-    "authenticity": 91,
-    "farmerRisk": 14,
+    "authenticity": 86,
+    "farmerRisk": 23,
     "botRisk": 8,
-    "sybilRisk": 11,
-    "vouchConfidence": 89
+    "sybilRisk": 17,
+    "vouchConfidence": 83
   },
   "recommendation": "VOUCH",
   "coverage": {
     "profileResolved": true,
-    "postsObserved": 30,
-    "distinctDaysObserved": 18,
+    "postsObserved": 20,
+    "distinctDaysObserved": 12,
     "sufficiency": "sufficient"
   },
   "diagnostics": {
     "retrievalMode": "x-api",
-    "retrievedPosts": 200,
-    "analysisSampleSize": 30
+    "retrievedPosts": 20,
+    "analysisSampleSize": 20
   }
 }
 ```
 
-When evidence is insufficient, `scores` is `null` and `recommendation` is `UNSCORABLE`.
+When evidence is inadequate:
 
-### `GET /api/health`
+```json
+{
+  "scores": null,
+  "recommendation": "UNSCORABLE"
+}
+```
 
-Recommended production state:
+## `GET /api/health`
+
+Healthy recommended production state:
 
 ```json
 {
@@ -485,105 +516,165 @@ Recommended production state:
 
 ---
 
-## TypeScript SDK
+# TypeScript SDK
 
 ```ts
 import { VouchGuardClient } from "./sdk/index";
 
-const guard = new VouchGuardClient({
+const vouchguard = new VouchGuardClient({
   baseUrl: "https://vouchguard-ai.vercel.app",
 });
 
-const assessment = await guard.scanAccount("mssystem1");
+const result = await vouchguard.scanAccount("mssystem1");
 
-if (assessment.scores) {
-  console.log(assessment.scores.authenticity);
-  console.log(assessment.scores.farmerRisk);
+if (result.scores) {
+  console.log(result.scores.authenticity);
+  console.log(result.scores.farmerRisk);
 } else {
-  console.log("Unscorable:", assessment.summary);
+  console.log("Unscorable:", result.summary);
 }
 ```
 
-Force refresh:
+Force a new analysis:
 
 ```ts
-await guard.scanAccount("mssystem1", { refresh: true });
+await vouchguard.scanAccount("mssystem1", { refresh: true });
 ```
 
 ---
 
-## Vercel production configuration
+# Testing
 
-Recommended production variables:
+## Unit/type/build
+
+```bash
+npm run typecheck
+npm test
+npm run build
+```
+
+## Demo production-server E2E
+
+```bash
+npm run test:e2e
+```
+
+Checks clean, farmer-heavy and bot/coordination-heavy synthetic scans.
+
+## Browser UI QA
+
+```bash
+npx playwright install chromium
+npm run test:ui
+```
+
+Playwright tests cover:
+
+- 1440px desktop scanner/result flow;
+- 390px mobile scanner/result flow;
+- mobile action stacking;
+- horizontal-overflow detection;
+- unscorable state with no fake numeric score;
+- absence of Vouch action on unscorable results;
+- phone methodology layout.
+
+CI installs Chromium and runs these checks automatically.
+
+## Live production validation
+
+Run the GitHub Actions workflow **Live Production Validation** after production credentials are configured. It verifies:
+
+- public site availability;
+- `/api/health`;
+- Grok configuration;
+- official X API configuration;
+- Blob storage;
+- a real forced account scan;
+- exact profile resolution;
+- minimum post coverage;
+- non-null non-placeholder scoring.
+
+---
+
+# Deployment
+
+Current production target:
 
 ```text
-XAI_API_KEY=<xAI key>
-X_BEARER_TOKEN=<X app-only bearer token>
-XAI_MODEL=grok-4.5-latest
-SCAN_CACHE_TTL_SECONDS=21600
-SCAN_RATE_LIMIT_PER_MINUTE=12
-VOUCHGUARD_DEMO_MODE=false
-NEXT_PUBLIC_APP_URL=https://vouchguard-ai.vercel.app
+https://vouchguard-ai.vercel.app
 ```
 
-Connect Vercel Blob through **Project → Storage** so Vercel injects `BLOB_READ_WRITE_TOKEN` automatically.
+Recommended deployment is Vercel's Git integration from `main`.
 
-After adding or changing an environment variable, redeploy Production.
+After changing a production environment variable, **redeploy Production** so the new value is available to server functions.
+
+The repository also contains `Emergency Vercel CLI Deploy (manual only)`. If that workflow is used, GitHub Actions secrets must include:
+
+```text
+VERCEL_TOKEN
+XAI_API_KEY
+X_BEARER_TOKEN
+```
+
+The emergency workflow refuses to report success unless live health confirms:
+
+```text
+xAI configured
+official X API configured
+retrieval = official-x-api
+Vercel Blob connected
+```
 
 ---
 
-## Mobile support
-
-The interface is responsive down to narrow phone layouts:
-
-- scan input/button stack vertically;
-- score cards use a 2-column mobile grid;
-- action buttons become full width;
-- evidence headers/source links wrap;
-- the hero radar shrinks without horizontal overflow;
-- public result and methodology pages use the same responsive system.
-
----
-
-## Safety and interpretation
+# Safety and interpretation
 
 VouchGuard is a **decision-support system**, not an identity oracle.
 
-- It does not state that an account *is* a bot, farmer or Sybil.
-- It reports behavioral risk patterns and confidence.
-- It does not infer sensitive personal attributes.
-- It never automatically Vouches or Slashes.
-- It requires evidence review before slash composition.
-- Missing data lowers/suppresses the assessment instead of becoming a negative signal.
-- Users should independently inspect the linked evidence before acting.
+- It does not claim an account definitely *is* a bot, farmer or Sybil.
+- Sybil Risk describes coordination patterns, not common ownership.
+- A farmer can be a genuine human.
+- Participation in Commons, Kaito, airdrops, points systems or crypto is not automatically penalized.
+- Repetitive required Commons command wording is not automatically bot evidence.
+- Sparse evidence lowers/suppresses confidence rather than raising risk.
+- Slash remains a human decision.
+- Public source links should be inspected independently before acting.
 
 ---
 
-## Relevant API documentation
+# Relevant documentation
+
+X API:
+
+- https://docs.x.com/x-api/getting-started/getting-access
+- https://docs.x.com/x-api/getting-started/pricing
+- https://docs.x.com/x-api/users/get-user-by-username
+- https://docs.x.com/x-api/users/get-posts
 
 xAI:
 
 - https://docs.x.ai/developers/models/grok-4.5
 - https://docs.x.ai/developers/model-capabilities/text/reasoning
-- https://docs.x.ai/developers/tools/x-search
 - https://docs.x.ai/developers/model-capabilities/text/structured-outputs
-
-X API:
-
-- https://docs.x.com/x-api/users/get-user-by-username
-- https://docs.x.com/x-api/posts/timelines/introduction
-- https://docs.x.com/x-api/users/get-posts
-- https://docs.x.com/x-api/getting-started/getting-access
+- https://docs.x.ai/developers/tools/x-search
 
 ---
 
-## Future extensions
+# Status
 
-- Commons vouch/slash graph adapter;
-- cross-account graph-cluster intelligence;
-- compare-two-accounts flow;
-- signed/shareable assessment cards;
-- browser extension;
-- user appeal/rescan workflow;
-- calibration benchmark from labeled accounts;
-- publishable `@vouchguard/sdk` package.
+The codebase includes:
+
+- responsive desktop/mobile UI;
+- deterministic production X retrieval adapter;
+- Grok 4.5 structured analysis;
+- transparent deterministic scoring;
+- evidence-first Slash review;
+- Vercel Blob cache/public pages;
+- TypeScript SDK;
+- unit tests;
+- production-build tests;
+- demo E2E;
+- Playwright desktop/mobile QA;
+- live production validation workflow.
+
+The recommended production path requires a valid `X_BEARER_TOKEN` and X API credits in addition to the xAI key.
