@@ -89,6 +89,11 @@ export interface XAccountSample {
   };
 }
 
+const ANALYSIS_DAYS = 180;
+const TIME_BUCKETS = 4;
+const POSTS_PER_BUCKET = 5;
+const MAX_SAMPLE_POSTS = TIME_BUCKETS * POSTS_PER_BUCKET;
+
 function bearerToken(): string {
   const token = process.env.X_BEARER_TOKEN?.trim();
   if (!token) throw new Error("X_BEARER_TOKEN is not configured.");
@@ -122,21 +127,6 @@ function postKind(post: XPost): XAccountSamplePost["kind"] {
   return "original";
 }
 
-function evenSample<T>(items: T[], limit: number): T[] {
-  if (items.length <= limit) return [...items];
-  if (limit <= 1) return [items[0]!];
-  const picked: T[] = [];
-  const used = new Set<number>();
-  for (let i = 0; i < limit; i++) {
-    const index = Math.round((i * (items.length - 1)) / (limit - 1));
-    if (!used.has(index)) {
-      used.add(index);
-      picked.push(items[index]!);
-    }
-  }
-  return picked;
-}
-
 function daysObserved(posts: XAccountSamplePost[]): number {
   return new Set(posts.map((post) => post.createdAt.slice(0, 10))).size;
 }
@@ -149,16 +139,16 @@ function buildCoverage(posts: XAccountSamplePost[]): InvestigationCoverage {
       postsObserved: posts.length,
       distinctDaysObserved: distinctDays,
       sufficiency: "insufficient",
-      note: `The X API resolved the profile but only ${posts.length} authored posts were available to the analysis sample.`,
+      note: `The X API resolved the profile but only ${posts.length} authored posts were available across the 180-day sampling windows.`,
     };
   }
-  if (posts.length < 15 || distinctDays < 4) {
+  if (posts.length < 12 || distinctDays < 4) {
     return {
       profileResolved: true,
       postsObserved: posts.length,
       distinctDaysObserved: distinctDays,
       sufficiency: "limited",
-      note: `The X API supplied ${posts.length} authored posts across ${distinctDays} distinct days; the result should be interpreted conservatively.`,
+      note: `The X API supplied ${posts.length} authored posts across ${distinctDays} distinct days and multiple time windows; the result should be interpreted conservatively.`,
     };
   }
   return {
@@ -166,8 +156,37 @@ function buildCoverage(posts: XAccountSamplePost[]): InvestigationCoverage {
     postsObserved: posts.length,
     distinctDaysObserved: distinctDays,
     sufficiency: "sufficient",
-    note: `The X API supplied a representative sample of ${posts.length} authored posts across ${distinctDays} distinct days.`,
+    note: `The X API supplied ${posts.length} authored posts across ${distinctDays} distinct days from four time buckets spanning 180 days.`,
   };
+}
+
+function buildTimeBuckets(now: Date): Array<{ start: string; end: string }> {
+  const windowMs = (ANALYSIS_DAYS * 24 * 60 * 60 * 1000) / TIME_BUCKETS;
+  const oldest = now.getTime() - ANALYSIS_DAYS * 24 * 60 * 60 * 1000;
+  const buckets: Array<{ start: string; end: string }> = [];
+
+  for (let index = 0; index < TIME_BUCKETS; index++) {
+    const start = new Date(oldest + index * windowMs);
+    const end = new Date(index === TIME_BUCKETS - 1 ? now.getTime() : oldest + (index + 1) * windowMs - 1_000);
+    buckets.push({ start: start.toISOString(), end: end.toISOString() });
+  }
+
+  return buckets;
+}
+
+async function fetchBucket(userId: string, bucket: { start: string; end: string }): Promise<XPost[]> {
+  const timelineUrl = new URL(`https://api.x.com/2/users/${userId}/tweets`);
+  timelineUrl.searchParams.set("max_results", String(POSTS_PER_BUCKET));
+  timelineUrl.searchParams.set("start_time", bucket.start);
+  timelineUrl.searchParams.set("end_time", bucket.end);
+  timelineUrl.searchParams.set("exclude", "retweets");
+  timelineUrl.searchParams.set(
+    "post.fields",
+    "created_at,conversation_id,lang,public_metrics,referenced_posts",
+  );
+
+  const payload = await xGet<XTimelineResponse>(timelineUrl);
+  return payload.data ?? [];
 }
 
 export async function fetchXAccountSample(handle: string): Promise<XAccountSample> {
@@ -178,28 +197,11 @@ export async function fetchXAccountSample(handle: string): Promise<XAccountSampl
   if (!user) throw new Error(`X API could not resolve @${handle}.`);
   if (user.protected) throw new Error(`@${user.username} is protected; VouchGuard only analyzes public X activity.`);
 
-  const start = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
-  const allPosts: XPost[] = [];
-  let paginationToken: string | undefined;
+  const bucketResponses = await Promise.all(buildTimeBuckets(new Date()).map((bucket) => fetchBucket(user.id, bucket)));
+  const uniquePosts = new Map<string, XPost>();
+  for (const post of bucketResponses.flat()) uniquePosts.set(post.id, post);
 
-  for (let page = 0; page < 3; page++) {
-    const timelineUrl = new URL(`https://api.x.com/2/users/${user.id}/tweets`);
-    timelineUrl.searchParams.set("max_results", "100");
-    timelineUrl.searchParams.set("start_time", start);
-    timelineUrl.searchParams.set("exclude", "retweets");
-    timelineUrl.searchParams.set(
-      "post.fields",
-      "created_at,conversation_id,lang,public_metrics,referenced_posts",
-    );
-    if (paginationToken) timelineUrl.searchParams.set("pagination_token", paginationToken);
-
-    const pagePayload = await xGet<XTimelineResponse>(timelineUrl);
-    allPosts.push(...(pagePayload.data ?? []));
-    paginationToken = pagePayload.meta?.next_token;
-    if (!paginationToken || allPosts.length >= 300) break;
-  }
-
-  const normalized = allPosts
+  const normalized = [...uniquePosts.values()]
     .filter((post) => Boolean(post.created_at && post.text))
     .map<XAccountSamplePost>((post) => ({
       id: post.id,
@@ -211,9 +213,10 @@ export async function fetchXAccountSample(handle: string): Promise<XAccountSampl
       lang: post.lang,
       metrics: post.public_metrics,
     }))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, MAX_SAMPLE_POSTS);
 
-  const posts = evenSample(normalized, 30);
+  const posts = normalized;
   const coverage = buildCoverage(posts);
   const metrics = user.public_metrics ?? {};
   const createdLabel = user.created_at ? new Date(user.created_at).toISOString().slice(0, 10) : "unknown";
@@ -224,7 +227,7 @@ export async function fetchXAccountSample(handle: string): Promise<XAccountSampl
       displayName: user.name,
       bioSummary: user.description || "No public X bio supplied.",
       accountHistory: `X account created ${createdLabel}. ${metrics.followers_count ?? 0} followers, ${metrics.following_count ?? 0} following, ${metrics.post_count ?? 0} lifetime posts.`,
-      activitySummary: `${posts.length} authored posts sampled from ${normalized.length} retrieved posts in the last 180 days.`,
+      activitySummary: `${posts.length} authored posts retrieved from four time buckets spanning the last ${ANALYSIS_DAYS} days.`,
     },
     coverage,
     posts,
