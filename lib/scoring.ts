@@ -1,7 +1,7 @@
 import type { ConfidenceLabel, GrokInvestigation, Recommendation, RiskScores } from "./types.ts";
 import { clamp, roundScore } from "./utils.ts";
 
-export const METHODOLOGY_VERSION = "vg-2026.08.2";
+export const METHODOLOGY_VERSION = "vg-2026.08.3";
 
 export function isNeutralMetricVector(investigation: GrokInvestigation): boolean {
   const values = Object.values(investigation.metrics);
