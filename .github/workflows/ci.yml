@@ -18,6 +18,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Deployment credential availability
+        env:
+          HAS_VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN != '' }}
+          HAS_XAI_API_KEY: ${{ secrets.XAI_API_KEY != '' }}
+        run: |
+          echo "VERCEL_TOKEN_CONFIGURED=${HAS_VERCEL_TOKEN}"
+          echo "XAI_API_KEY_CONFIGURED=${HAS_XAI_API_KEY}"
       - name: Install dependencies
         run: npm install --no-audit --no-fund
       - name: Typecheck
