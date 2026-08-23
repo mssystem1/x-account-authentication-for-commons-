@@ -30,12 +30,12 @@ jobs:
         run: npm run test:e2e
 
   live-production-regression:
-    if: github.event_name == 'push'
+    if: github.event_name == 'pull_request'
     needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - name: Wait for vg-2026.08.3 and scan @natalia77351991
+      - name: Probe canonical @Natalia77351991 casing
         shell: bash
         run: |
           set -euo pipefail
@@ -72,7 +72,7 @@ jobs:
           HTTP="$(curl --location --silent --show-error --output /tmp/scan.json --write-out '%{http_code}' \
             -X POST "$BASE/api/scan" \
             -H 'Content-Type: application/json' \
-            --data '{"handle":"natalia77351991","refresh":true}')"
+            --data '{"handle":"Natalia77351991","refresh":true}')"
           echo "Scan HTTP=$HTTP"
           if [ "$HTTP" != "200" ]; then
             cat /tmp/scan.json
@@ -96,7 +96,7 @@ jobs:
             summary:r.summary
           };
           console.log(JSON.stringify(out,null,2));
-          if (r.handle !== 'natalia77351991') throw new Error('Wrong account returned');
+          if (r.handle !== 'Natalia77351991') throw new Error('Wrong account returned');
           if (r.mode !== 'live') throw new Error('Not a live scan');
           if (r.scores) {
             const values=[r.scores.authenticity,r.scores.farmerRisk,r.scores.botRisk,r.scores.sybilRisk,r.scores.vouchConfidence];
