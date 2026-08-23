@@ -3,51 +3,78 @@ export default function MethodologyPage() {
     <main>
       <header className="site-header page-width"><a className="brand" href="/"><span className="brand-mark">V</span><span>VouchGuard <em>AI</em></span></a><nav><a href="/">Auditor</a><a href="https://github.com/mssystem1/x-account-authentication-for-commons-" target="_blank" rel="noreferrer">GitHub ↗</a></nav></header>
       <article className="methodology page-width">
-        <p className="eyebrow">METHODOLOGY · VG-COMMONS-2026.08.2</p>
+        <p className="eyebrow">METHODOLOGY · VG-COMMONS-2026.08.3</p>
         <h1>Audit how the rank was built.</h1>
-        <p className="lead">VouchGuard starts from Commons’ own target ledger, not from a random X-post sample. It reconstructs the incoming vouch/slash network, measures how much of the current score is attributable to observed ledger actions, inspects supporter relationships, then asks Grok 4.5 to explain the deterministic evidence.</p>
+        <p className="lead">VouchGuard starts from Commons’ own target ledger and deliberately treats positive support and negative attacks as two different questions. It reconstructs incoming vouches and slashes, samples both sides of the second-hop graph independently, calculates deterministic metrics, then asks Grok 4.5 to explain the evidence.</p>
 
-        <h2>Primary data</h2>
+        <h2>Why there is no single “integrity” number anymore</h2>
+        <div className="method-grid">
+          <div><strong>Support Integrity</strong><p>How natural the incoming VOUCH network looks: diversity, reciprocity, supporter clusters, timing, concentration and sampled account thinness.</p></div>
+          <div><strong>Slash Attack Risk</strong><p>How strongly the account has been hit by negative actions, combined with timing and graph evidence that may indicate coordinated attackers.</p></div>
+          <div><strong>Attack pressure ≠ bots</strong><p>Many slashers or millions of removed points can prove the rank was heavily affected. They cannot by themselves prove that the attackers are automated or controlled by one operator.</p></div>
+          <div><strong>Bot/Sybil Network Risk</strong><p>This narrower metric only increases from graph coordination and thin-account patterns. It is explicitly probabilistic, not an identity verdict.</p></div>
+        </div>
+
+        <h2>Primary Commons data</h2>
         <div className="method-grid">
           <div><strong>Target ledger</strong><p>Every incoming Commons vouch and slash for the requested creator is read, including actor handle, point impact, timestamp and source post when supplied.</p></div>
-          <div><strong>Second-hop supporter graph</strong><p>VouchGuard loads up to 40 high-impact supporter/slasher ledgers to see whether the target reciprocated them and whether supporters strongly vouch one another.</p></div>
-          <div><strong>No X API required</strong><p>The normal Commons integrity audit does not need paid X timeline retrieval. X is only used for outbound links/source inspection.</p></div>
-          <div><strong>Graph coverage</strong><p>If Commons rate limits or second-hop ledgers cannot be loaded, coverage falls and the final score receives a confidence penalty.</p></div>
+          <div><strong>Separate second-hop budgets</strong><p>Up to 30 voucher ledgers and up to 30 slasher ledgers are sampled independently. A popular account with hundreds of vouchers can therefore no longer consume every graph slot and hide its slasher network.</p></div>
+          <div><strong>Impact + recency sampling</strong><p>Each side reserves most slots for high-impact actors and the remaining slots for recent actors. This captures both score-moving accounts and coordinated bursts.</p></div>
+          <div><strong>No paid X API required</strong><p>The core rank audit uses Commons data. X links remain available for human inspection, but follower count or X Premium is not required for the normal score.</p></div>
         </div>
 
-        <h2>How much did support create the current score?</h2>
+        <h2>How much did ledger activity move the rank?</h2>
         <div className="method-grid">
           <div><strong>Net ledger impact</strong><p>Observed incoming vouch points minus observed incoming slash points.</p></div>
-          <div><strong>Estimated pre-ledger/base contribution</strong><p>Current Commons total minus observed net ledger impact. This is explicitly an estimate derived from the ledger, not an official Commons base-score field.</p></div>
-          <div><strong>Estimated net support share</strong><p>The positive net ledger impact divided by the current Commons total, capped to 0–100%. It answers how dependent the current score appears to be on incoming support.</p></div>
-          <div><strong>Context, not guilt</strong><p>A creator can be highly support-dependent and still be organically supported. Support dependence does not increase coordination risk by itself.</p></div>
+          <div><strong>Estimated pre-ledger/base contribution</strong><p>Current Commons total minus observed net ledger impact. This is a derived estimate, not an official Commons base-score field.</p></div>
+          <div><strong>Estimated net support share</strong><p>Positive net ledger impact divided by the current positive Commons total. It shows how support-dependent the current score appears to be.</p></div>
+          <div><strong>Rank Distortion Risk</strong><p>Combines suspicious positive-support influence with the magnitude of negative slash pressure. It describes how unstable/externally-driven the observed rank may be, not whether the creator did anything wrong.</p></div>
         </div>
 
-        <h2>What VouchGuard measures</h2>
-        <div className="method-grid">
-          <div><strong>Organic support</strong><p>High when support is diverse, weakly reciprocal, not dominated by a closed cluster, and not concentrated into synchronized bursts.</p></div>
-          <div><strong>Coordination risk</strong><p>Combines connected-supporter concentration, internal vouch density, reciprocity, timing concentration and point concentration.</p></div>
-          <div><strong>Reciprocity risk</strong><p>Measures how many incoming vouchers appear to have been vouched back by the target.</p></div>
-          <div><strong>Point concentration</strong><p>Measures whether one or a few vouchers dominate reputation impact. High concentration is context, not proof of manipulation.</p></div>
-          <div><strong>Timing risk</strong><p>Measures the largest 15-minute and 60-minute vouch bursts recorded by the Commons ledger.</p></div>
-          <div><strong>Thin-support risk</strong><p>Flags vouchers that are both far below the target supporter median in estimated vouch power and have very little incoming Commons graph support.</p></div>
-          <div><strong>Bot/Sybil support risk</strong><p>A combined coordination indicator. It does not prove that accounts are automated or share one owner.</p></div>
-        </div>
-
-        <h2>Important interpretation rules</h2>
+        <h2>Support-side signals</h2>
         <ul>
-          <li>Reciprocal vouching alone is not proof of abuse.</li>
-          <li>A strong creator may legitimately contribute a large share of points, so point concentration is never decisive by itself.</li>
-          <li>Dense internal supporter links plus high reciprocity plus synchronized timing are stronger together than any single signal.</li>
-          <li>Vouch power is estimated from the Commons rule that an action moves roughly 35% of the actor’s base score; this estimate is contextual, not an official base-score field.</li>
-          <li>Target base/support-dependence values are reconstructed from the current total and observed ledger actions and are always labelled estimates.</li>
-          <li>“Bot/Sybil risk” is a behavioral-network risk label, not an identity determination.</li>
-          <li>If too little support data exists, the UI suppresses the headline/component scores instead of presenting sparse evidence as certainty.</li>
-          <li>Grok does not set the numeric scores. It receives the already-computed graph statistics and produces a human-readable verdict.</li>
+          <li>Unique voucher count and point diversity.</li>
+          <li>How many vouchers appear to have been vouched back by the target.</li>
+          <li>Largest connected voucher component and same-side vouch links.</li>
+          <li>Top-1 / top-5 point concentration and HHI.</li>
+          <li>Vouch timing bursts.</li>
+          <li>Thin low-power voucher accounts in the sampled graph.</li>
+          <li>Voucher graph coverage. Low coverage prevents an overconfident “organic” verdict for highly support-dependent ranks.</li>
         </ul>
 
-        <h2>Final output</h2>
-        <p>The headline <strong>Commons Integrity Score</strong> summarizes how organic the observed support network looks after a graph-coverage penalty. The page separately shows how support-dependent the current Commons total appears to be, along with component risks, supporters, reciprocal relationships, cluster statistics and the original incoming Commons events.</p>
+        <h2>Slash-attack signals</h2>
+        <ul>
+          <li>Unique slasher count and total points removed.</li>
+          <li>Negative-action share: slashes as a fraction of all absolute incoming vouch/slash impact.</li>
+          <li>Slash impact relative to the estimated pre-ledger/base contribution.</li>
+          <li>Maximum 5-minute, 15-minute and 60-minute slash bursts.</li>
+          <li>Largest connected slasher component and positive links among sampled slashers.</li>
+          <li>Top-1 / top-5 slash-point concentration.</li>
+          <li>Thin low-power slasher accounts in the sampled graph.</li>
+          <li>Slasher graph coverage. Low coverage means coordination is unresolved — never “proven absent.”</li>
+        </ul>
+
+        <h2>Verdict logic</h2>
+        <div className="method-grid">
+          <div><strong>Likely organic</strong><p>Support looks healthy with adequate graph coverage and no major negative attack pressure.</p></div>
+          <div><strong>Support needs review</strong><p>Usually used when the rank is highly dependent on incoming vouches but too little of the supporter graph has been sampled for a strong positive verdict.</p></div>
+          <div><strong>Heavy slash pressure</strong><p>The rank has been strongly affected by slashing, but the Commons-only graph does not yet establish coordinated attackers.</p></div>
+          <div><strong>Slash attack risk</strong><p>Heavy negative pressure is accompanied by meaningful timing/cluster/thin-account coordination signals.</p></div>
+          <div><strong>Support coordination risk</strong><p>The positive vouch network itself contains strong coordination patterns.</p></div>
+          <div><strong>Contested manipulation</strong><p>Both positive support and negative slash activity contain strong coordination signals.</p></div>
+        </div>
+
+        <h2>Grok’s role</h2>
+        <p>Grok does not choose the numeric scores and cannot override the deterministic verdict. It receives the already-computed Commons statistics, top sampled vouchers/slashers and evidence, then writes separate support and attack interpretations. It is instructed not to call users bots or Sybils as facts.</p>
+
+        <h2>Important limitations</h2>
+        <ul>
+          <li>Commons ledgers expose incoming actions. They do not provide a bulk outgoing-action feed, so second-hop relationships are reconstructed by loading other targets’ ledgers.</li>
+          <li>A mass slash wave can be genuine community punishment, coordinated community action, a bot attack, or a mixture. Commons-only data can estimate the pattern but cannot prove the operator behind accounts.</li>
+          <li>Follower counts, X Premium, account age and post behavior are not currently used in the core score. They can be added later as an optional deep identity check for suspicious actors.</li>
+          <li>Reciprocity, point concentration and community membership are context signals. None is proof of wrongdoing by itself.</li>
+          <li>Public leaderboard mirrors can lag behind the live Commons ledger while the experiment/team is changing scores or cleaning bots.</li>
+        </ul>
       </article>
     </main>
   );
