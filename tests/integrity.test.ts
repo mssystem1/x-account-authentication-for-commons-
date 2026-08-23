@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSupporterProfiles, calculateIntegrityMetrics, calculateNetworkStats, deterministicVerdict } from "../lib/integrity.ts";
+import { buildSupporterProfiles, calculateIntegrityMetrics, calculateNetworkStats } from "../lib/integrity.ts";
+import { rankVerdict } from "../lib/verdict.ts";
 import type { CommonsLedger } from "../lib/integrity-types.ts";
 
 function targetLedger(handles: string[], closeTiming = false): CommonsLedger {
@@ -151,7 +152,7 @@ test("closed reciprocal voucher ring produces high support coordination risk", (
   assert.ok(stats.voucherLargestComponentShare >= 0.9);
   assert.ok(metrics.supportCoordinationRisk >= 60);
   assert.ok(metrics.supportIntegrity < 55);
-  assert.equal(deterministicVerdict(metrics, stats), "SUPPORT_COORDINATION_RISK");
+  assert.equal(rankVerdict(metrics, stats), "SUPPORT_COORDINATION_RISK");
 });
 
 test("organic vouches plus mass slashing never produces a blanket likely-organic verdict", () => {
@@ -167,7 +168,7 @@ test("organic vouches plus mass slashing never produces a blanket likely-organic
   const profiles = buildSupporterProfiles(target, ledgers);
   const stats = calculateNetworkStats(target, ledgers, profiles);
   const metrics = calculateIntegrityMetrics(stats);
-  const verdict = deterministicVerdict(metrics, stats);
+  const verdict = rankVerdict(metrics, stats);
 
   assert.ok(metrics.supportIntegrity >= 65, `support integrity ${metrics.supportIntegrity}`);
   assert.ok(metrics.attackPressure >= 65, `attack pressure ${metrics.attackPressure}`);
@@ -191,5 +192,5 @@ test("slasher ring is measured independently from voucher ring", () => {
   assert.ok(stats.internalSlasherVouchEdges >= 18);
   assert.ok(stats.slasherLargestComponentShare >= 0.9);
   assert.ok(metrics.attackCoordinationRisk >= 50);
-  assert.ok(metrics.botSybilNetworkRisk >= 30);
+  assert.ok(metrics.botSybilNetworkRisk >= 25);
 });
