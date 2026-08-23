@@ -7,11 +7,11 @@ import { ResultPanel } from "./ResultPanel";
 const auditSteps = [
   "Loading Commons creator ledger",
   "Collecting vouchers and slashers",
-  "Building supporter graph",
-  "Checking reciprocal vouch patterns",
-  "Measuring clusters and timing",
-  "Calculating Commons integrity",
-  "Grok is writing the verdict",
+  "Sampling voucher graph",
+  "Sampling slasher graph",
+  "Measuring support coordination",
+  "Measuring slash attack pressure",
+  "Grok is explaining the verdict",
 ];
 
 export function Scanner() {
@@ -63,9 +63,9 @@ export function Scanner() {
           <div className="handle-input"><span>@</span><input id="handle" name="handle" aria-label="COMMONS CREATOR" autoComplete="off" autoCapitalize="none" placeholder="username" value={handle} onChange={(event) => setHandle(event.target.value)} disabled={loading} /></div>
           <button className="scan-button" disabled={loading || !handle.trim()}>{loading ? "Auditing…" : "Audit creator"}</button>
         </div>
-        <p className="input-help">VouchGuard reads the creator’s Commons ledger, traces who vouched or slashed them, inspects supporter-to-supporter relationships, and estimates whether the leaderboard position looks organic or coordinated.</p>
+        <p className="input-help">VouchGuard reads the creator’s Commons ledger and audits both sides of the rank: who vouched them, who slashed them, whether either group is connected, and how strongly those actions moved the leaderboard score.</p>
       </form>
-      {loading && <div className="scan-progress"><div className="pulse-orb" aria-hidden="true"><span /></div><div><strong>{auditSteps[step]}</strong><p>Commons ledger graph + deterministic metrics + Grok 4.5 verdict</p></div><div className="progress-dots" aria-hidden="true">{auditSteps.map((_, index) => <span key={index} className={index <= step ? "active" : ""} />)}</div></div>}
+      {loading && <div className="scan-progress"><div className="pulse-orb" aria-hidden="true"><span /></div><div><strong>{auditSteps[step]}</strong><p>Commons vouch graph + slash attack graph + deterministic metrics + Grok explanation</p></div><div className="progress-dots" aria-hidden="true">{auditSteps.map((_, index) => <span key={index} className={index <= step ? "active" : ""} />)}</div></div>}
       {error && <div className="error-box"><strong>Audit could not complete.</strong><span>{error}</span></div>}
     </section>
     {result && <ResultPanel result={result} />}
