@@ -1,6 +1,7 @@
 import { INVESTIGATION_JSON_SCHEMA, parseGrokInvestigation } from "./schema.ts";
-import { investigationPrompt } from "./prompt.ts";
+import { accountSamplePrompt, investigationPrompt } from "./prompt.ts";
 import type { GrokInvestigation, RetrievalMode } from "./types.ts";
+import { fetchXAccountSample } from "./x-api.ts";
 
 interface XaiResponse {
   output_text?: string;
@@ -17,6 +18,8 @@ interface InvestigationRun {
   webSearchCalls: number;
   retrievalMode: RetrievalMode;
   directTargetSources: number;
+  retrievedPosts?: number;
+  analysisSampleSize?: number;
 }
 
 function responseText(response: XaiResponse): string {
@@ -77,7 +80,110 @@ function enforceRecoveryEvidence(run: InvestigationRun): InvestigationRun {
   return run;
 }
 
-async function runInvestigation(
+async function analyzeOfficialXSample(handle: string, model: string): Promise<InvestigationRun> {
+  const sample = await fetchXAccountSample(handle);
+
+  if (sample.coverage.sufficiency === "insufficient") {
+    return {
+      investigation: {
+        profile: sample.profile,
+        coverage: sample.coverage,
+        metrics: {
+          contentOriginality: 0,
+          identityContinuity: 0,
+          engagementQuality: 0,
+          socialDiversity: 0,
+          campaignConcentration: 0,
+          reciprocityPressure: 0,
+          automationPattern: 0,
+          temporalAnomalies: 0,
+          networkCoordination: 0,
+        },
+        evidence: [],
+        summary: `The official X API resolved @${sample.account.username}, but there was not enough public authored activity in the analysis window to score the account reliably.`,
+        confidence: 0.1,
+        uncertainties: [sample.coverage.note],
+      },
+      xSearchCalls: 0,
+      webSearchCalls: 0,
+      retrievalMode: "x-api",
+      directTargetSources: 0,
+      retrievedPosts: sample.rawPostsRetrieved,
+      analysisSampleSize: sample.posts.length,
+    };
+  }
+
+  const apiKey = process.env.XAI_API_KEY;
+  if (!apiKey) throw new Error("XAI_API_KEY is not configured.");
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 22_000);
+  try {
+    const response = await fetch("https://api.x.ai/v1/responses", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        input: accountSamplePrompt(sample),
+        reasoning: { effort: "low" },
+        text: {
+          format: {
+            type: "json_schema",
+            name: "vouchguard_account_investigation",
+            schema: INVESTIGATION_JSON_SCHEMA,
+            strict: true,
+          },
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    const payload = (await response.json()) as XaiResponse;
+    if (!response.ok) {
+      throw new Error(payload.error?.message || `xAI request failed with HTTP ${response.status}.`);
+    }
+
+    const investigation = parseGrokInvestigation(JSON.parse(responseText(payload)) as unknown, sample.account.username);
+    investigation.profile = sample.profile;
+    investigation.coverage = sample.coverage;
+
+    const allowedUrls = new Set(sample.posts.map((post) => post.url));
+    for (const item of investigation.evidence) {
+      item.sourceUrls = item.sourceUrls.filter((url) => allowedUrls.has(url));
+    }
+
+    const directSources = directTargetSourceCount(investigation, sample.account.username);
+    if (directSources < 1) {
+      investigation.confidence = Math.min(investigation.confidence, 0.4);
+      investigation.uncertainties = [
+        "Grok analyzed an official X API sample but did not attach a supplied target-post URL to any evidence item.",
+        ...investigation.uncertainties,
+      ].slice(0, 8);
+    }
+
+    return {
+      investigation,
+      xSearchCalls: 0,
+      webSearchCalls: 0,
+      retrievalMode: "x-api",
+      directTargetSources: directSources,
+      retrievedPosts: sample.rawPostsRetrieved,
+      analysisSampleSize: sample.posts.length,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("Grok timed out while analyzing the deterministic X API sample. Try the scan again.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runNativeInvestigation(
   handle: string,
   model: string,
   days: number,
@@ -152,14 +258,11 @@ async function runInvestigation(
   }
 }
 
-export async function investigateWithGrok(handle: string): Promise<InvestigationRun & { model: string }> {
-  if (!process.env.XAI_API_KEY) throw new Error("XAI_API_KEY is not configured.");
-  const model = process.env.XAI_MODEL || "grok-4.5-latest";
-
+async function investigateWithNativeXSearch(handle: string, model: string): Promise<InvestigationRun> {
   let scoped: InvestigationRun | null = null;
   try {
-    scoped = await runInvestigation(handle, model, 120, 2, 14_000, "fallback", "scoped");
-    if (hasMinimumCoverage(scoped.investigation)) return { ...scoped, model };
+    scoped = await runNativeInvestigation(handle, model, 120, 2, 14_000, "fallback", "scoped");
+    if (hasMinimumCoverage(scoped.investigation)) return scoped;
   } catch (error) {
     if (!(error instanceof Error) || error.name !== "AbortError") throw error;
     console.warn(`VouchGuard scoped X Search timed out for @${handle}; switching to recovery search.`);
@@ -170,29 +273,34 @@ export async function investigateWithGrok(handle: string): Promise<Investigation
     : "Scoped X Search exceeded its latency budget.";
 
   try {
-    const recovery = await runInvestigation(
-      handle,
-      model,
-      180,
-      3,
-      28_000,
-      "standard",
-      "recovery",
-    );
+    const recovery = await runNativeInvestigation(handle, model, 180, 3, 28_000, "standard", "recovery");
     recovery.investigation.uncertainties = [
       `${scopedReason} VouchGuard used unscoped exact-author X recovery search.`,
       ...recovery.investigation.uncertainties,
     ].slice(0, 8);
-
-    // Recovery is broader than the exact-handle tool filter, so cap confidence
-    // unless direct account evidence is strong enough for the schema's own coverage gate.
     recovery.investigation.confidence = Math.min(recovery.investigation.confidence, 0.82);
-
-    return { ...recovery, model };
+    return recovery;
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("The xAI account investigation timed out during recovery search. Try the scan again.");
+      throw new Error("The xAI account investigation timed out during recovery search. Configure X_BEARER_TOKEN for deterministic production retrieval.");
     }
     throw error;
   }
+}
+
+export async function investigateWithGrok(handle: string): Promise<InvestigationRun & { model: string }> {
+  if (!process.env.XAI_API_KEY) throw new Error("XAI_API_KEY is not configured.");
+  const model = process.env.XAI_MODEL || "grok-4.5-latest";
+
+  if (process.env.X_BEARER_TOKEN?.trim()) {
+    const result = await analyzeOfficialXSample(handle, model);
+    return { ...result, model };
+  }
+
+  const fallback = await investigateWithNativeXSearch(handle, model);
+  fallback.investigation.uncertainties = [
+    "Official X API retrieval is not configured. This scan used xAI native X Search fallback, which may have coverage gaps for some accounts.",
+    ...fallback.investigation.uncertainties,
+  ].slice(0, 8);
+  return { ...fallback, model };
 }
