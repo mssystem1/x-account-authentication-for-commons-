@@ -1,4 +1,4 @@
-import type { EvidenceItem, GrokInvestigation, GrokMetrics } from "./types.ts";
+import type { DataSufficiency, EvidenceItem, GrokInvestigation, GrokMetrics } from "./types.ts";
 import { clamp } from "./utils.ts";
 
 export const INVESTIGATION_JSON_SCHEMA = {
@@ -16,6 +16,18 @@ export const INVESTIGATION_JSON_SCHEMA = {
         activitySummary: { type: "string" },
       },
       required: ["handle", "displayName", "bioSummary", "accountHistory", "activitySummary"],
+    },
+    coverage: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        profileResolved: { type: "boolean" },
+        postsObserved: { type: "integer", minimum: 0, maximum: 500 },
+        distinctDaysObserved: { type: "integer", minimum: 0, maximum: 366 },
+        sufficiency: { type: "string", enum: ["sufficient", "limited", "insufficient"] },
+        note: { type: "string" },
+      },
+      required: ["profileResolved", "postsObserved", "distinctDaysObserved", "sufficiency", "note"],
     },
     metrics: {
       type: "object",
@@ -64,7 +76,7 @@ export const INVESTIGATION_JSON_SCHEMA = {
     confidence: { type: "number", minimum: 0, maximum: 1 },
     uncertainties: { type: "array", items: { type: "string" } },
   },
-  required: ["profile", "metrics", "evidence", "summary", "confidence", "uncertainties"],
+  required: ["profile", "coverage", "metrics", "evidence", "summary", "confidence", "uncertainties"],
 } as const;
 
 const metricKeys: (keyof GrokMetrics)[] = [
@@ -83,9 +95,21 @@ function stringValue(value: unknown, fallback = "Unknown"): string {
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
 }
 
-function numberValue(value: unknown, min: number, max: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return min;
+function requiredNumber(value: unknown, min: number, max: number, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`xAI returned an invalid numeric field: ${field}.`);
+  }
   return clamp(value, min, max);
+}
+
+function requiredBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`xAI returned an invalid boolean field: ${field}.`);
+  return value;
+}
+
+function sufficiencyValue(value: unknown): DataSufficiency {
+  if (value === "sufficient" || value === "limited" || value === "insufficient") return value;
+  throw new Error("xAI returned an invalid data-sufficiency value.");
 }
 
 function safeSourceUrl(value: unknown): string | null {
@@ -104,10 +128,11 @@ export function parseGrokInvestigation(value: unknown, requestedHandle: string):
   if (!value || typeof value !== "object") throw new Error("xAI returned an invalid assessment object.");
   const root = value as Record<string, unknown>;
   const rawProfile = (root.profile ?? {}) as Record<string, unknown>;
+  const rawCoverage = (root.coverage ?? {}) as Record<string, unknown>;
   const rawMetrics = (root.metrics ?? {}) as Record<string, unknown>;
 
   const metrics = {} as GrokMetrics;
-  for (const key of metricKeys) metrics[key] = numberValue(rawMetrics[key], 0, 100);
+  for (const key of metricKeys) metrics[key] = requiredNumber(rawMetrics[key], 0, 100, `metrics.${key}`);
 
   const rawEvidence = Array.isArray(root.evidence) ? root.evidence : [];
   const evidence: EvidenceItem[] = rawEvidence.slice(0, 24).flatMap((item) => {
@@ -126,8 +151,8 @@ export function parseGrokInvestigation(value: unknown, requestedHandle: string):
       label: stringValue(row.label, "Observed pattern"),
       observation: stringValue(row.observation, "No explanation supplied."),
       impact: impact as EvidenceItem["impact"],
-      severity: numberValue(row.severity, 0, 100),
-      confidence: numberValue(row.confidence, 0, 1),
+      severity: requiredNumber(row.severity, 0, 100, "evidence.severity"),
+      confidence: requiredNumber(row.confidence, 0, 1, "evidence.confidence"),
       sourceUrls,
     }];
   });
@@ -140,10 +165,17 @@ export function parseGrokInvestigation(value: unknown, requestedHandle: string):
       accountHistory: stringValue(rawProfile.accountHistory, "Account history could not be established."),
       activitySummary: stringValue(rawProfile.activitySummary, "Activity summary unavailable."),
     },
+    coverage: {
+      profileResolved: requiredBoolean(rawCoverage.profileResolved, "coverage.profileResolved"),
+      postsObserved: Math.floor(requiredNumber(rawCoverage.postsObserved, 0, 500, "coverage.postsObserved")),
+      distinctDaysObserved: Math.floor(requiredNumber(rawCoverage.distinctDaysObserved, 0, 366, "coverage.distinctDaysObserved")),
+      sufficiency: sufficiencyValue(rawCoverage.sufficiency),
+      note: stringValue(rawCoverage.note, "Coverage details unavailable."),
+    },
     metrics,
     evidence,
     summary: stringValue(root.summary, "No summary supplied."),
-    confidence: numberValue(root.confidence, 0, 1),
+    confidence: requiredNumber(root.confidence, 0, 1, "confidence"),
     uncertainties: Array.isArray(root.uncertainties)
       ? root.uncertainties.filter((item): item is string => typeof item === "string").slice(0, 8)
       : [],
