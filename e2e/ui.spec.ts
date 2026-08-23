@@ -23,6 +23,7 @@ test("desktop creator audit renders Commons integrity report", async ({ page }) 
   await expect(page.getByText("Observed Commons graph signals")).toBeVisible();
   await expect(page.getByText("Who moved this creator’s Commons score?")).toBeVisible();
   await expect(page.getByText("Incoming vouches and slashes")).toBeVisible();
+  await expect(page.getByText("Est. score from net support", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /Share integrity audit on X/i })).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
@@ -65,6 +66,6 @@ test("methodology page remains readable on phone viewport", async ({ page }) => 
   await page.setViewportSize({ width: 360, height: 800 });
   await page.goto("/methodology");
   await expect(page.getByRole("heading", { name: "Audit how the rank was built." })).toBeVisible();
-  await expect(page.getByText(/VG-COMMONS-2026\.08\.1/i)).toBeVisible();
+  await expect(page.getByText(/VG-COMMONS-2026\.08\.2/i)).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
