@@ -1,6 +1,6 @@
 import { INVESTIGATION_JSON_SCHEMA, parseGrokInvestigation } from "./schema.ts";
 import { investigationPrompt } from "./prompt.ts";
-import type { GrokInvestigation } from "./types.ts";
+import type { GrokInvestigation, RetrievalMode } from "./types.ts";
 
 interface XaiResponse {
   output_text?: string;
@@ -8,10 +8,15 @@ interface XaiResponse {
     type?: string;
     content?: Array<{ type?: string; text?: string }>;
   }>;
-  usage?: {
-    num_server_side_tools_used?: number;
-  };
   error?: { message?: string };
+}
+
+interface InvestigationRun {
+  investigation: GrokInvestigation;
+  xSearchCalls: number;
+  webSearchCalls: number;
+  retrievalMode: RetrievalMode;
+  directTargetSources: number;
 }
 
 function responseText(response: XaiResponse): string {
@@ -28,12 +33,48 @@ function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function countXSearchCalls(response: XaiResponse): number {
-  const explicitCalls = (response.output ?? []).filter((item) => item.type === "x_search_call").length;
-  const serverToolCount = typeof response.usage?.num_server_side_tools_used === "number"
-    ? response.usage.num_server_side_tools_used
-    : 0;
-  return Math.max(explicitCalls, serverToolCount);
+function countToolCalls(response: XaiResponse, type: "x_search_call" | "web_search_call"): number {
+  return (response.output ?? []).filter((item) => item.type === type).length;
+}
+
+function directTargetSourceCount(investigation: GrokInvestigation, handle: string): number {
+  const target = handle.toLowerCase();
+  const urls = investigation.evidence.flatMap((item) => item.sourceUrls);
+  const direct = new Set<string>();
+
+  for (const value of urls) {
+    try {
+      const url = new URL(value);
+      if (!/(^|\.)x\.com$|(^|\.)twitter\.com$/.test(url.hostname)) continue;
+      const parts = url.pathname.split("/").filter(Boolean);
+      if (parts.length >= 3 && parts[0]?.toLowerCase() === target && parts[1]?.toLowerCase() === "status") {
+        direct.add(url.toString());
+      }
+    } catch {
+      // Source URLs were already sanitized by the schema parser; ignore malformed leftovers defensively.
+    }
+  }
+
+  return direct.size;
+}
+
+function hasMinimumCoverage(investigation: GrokInvestigation): boolean {
+  return investigation.coverage.profileResolved &&
+    investigation.coverage.postsObserved >= 5 &&
+    investigation.coverage.sufficiency !== "insufficient";
+}
+
+function enforceRecoveryEvidence(run: InvestigationRun): InvestigationRun {
+  if (run.retrievalMode !== "recovery" || run.directTargetSources > 0) return run;
+
+  run.investigation.coverage.sufficiency = "insufficient";
+  run.investigation.confidence = Math.min(run.investigation.confidence, 0.25);
+  run.investigation.coverage.note = `${run.investigation.coverage.note} Recovery search did not provide a verifiable direct post URL authored by the requested handle.`;
+  run.investigation.uncertainties = [
+    "Recovery search could not provide a direct target-post URL, so VouchGuard refused to score the account.",
+    ...run.investigation.uncertainties,
+  ].slice(0, 8);
+  return run;
 }
 
 async function runInvestigation(
@@ -43,7 +84,8 @@ async function runInvestigation(
   maxTurns: number,
   timeoutMs: number,
   depth: "standard" | "fallback",
-): Promise<{ investigation: GrokInvestigation; xSearchCalls: number }> {
+  retrievalMode: "scoped" | "recovery",
+): Promise<InvestigationRun> {
   const apiKey = process.env.XAI_API_KEY;
   if (!apiKey) throw new Error("XAI_API_KEY is not configured.");
 
@@ -51,6 +93,29 @@ async function runInvestigation(
   const from = new Date(to.getTime() - days * 24 * 60 * 60 * 1000);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  const xSearchTool = retrievalMode === "scoped"
+    ? {
+        type: "x_search",
+        allowed_x_handles: [handle],
+        from_date: isoDate(from),
+        to_date: isoDate(to),
+      }
+    : {
+        type: "x_search",
+        from_date: isoDate(from),
+        to_date: isoDate(to),
+      };
+
+  const tools = retrievalMode === "scoped"
+    ? [xSearchTool]
+    : [
+        xSearchTool,
+        {
+          type: "web_search",
+          filters: { allowed_domains: ["x.com", "twitter.com"] },
+        },
+      ];
 
   try {
     const response = await fetch("https://api.x.ai/v1/responses", {
@@ -61,16 +126,9 @@ async function runInvestigation(
       },
       body: JSON.stringify({
         model,
-        input: investigationPrompt(handle, isoDate(from), isoDate(to), depth),
+        input: investigationPrompt(handle, isoDate(from), isoDate(to), depth, retrievalMode),
         max_turns: maxTurns,
-        tools: [
-          {
-            type: "x_search",
-            allowed_x_handles: [handle],
-            from_date: isoDate(from),
-            to_date: isoDate(to),
-          },
-        ],
+        tools,
         text: {
           format: {
             type: "json_schema",
@@ -89,42 +147,64 @@ async function runInvestigation(
     }
 
     const raw = JSON.parse(responseText(payload)) as unknown;
-    return {
-      investigation: parseGrokInvestigation(raw, handle),
-      xSearchCalls: countXSearchCalls(payload),
+    const investigation = parseGrokInvestigation(raw, handle);
+    const run: InvestigationRun = {
+      investigation,
+      xSearchCalls: countToolCalls(payload, "x_search_call"),
+      webSearchCalls: countToolCalls(payload, "web_search_call"),
+      retrievalMode,
+      directTargetSources: directTargetSourceCount(investigation, handle),
     };
+    return enforceRecoveryEvidence(run);
   } finally {
     clearTimeout(timeout);
   }
 }
 
-export async function investigateWithGrok(handle: string): Promise<{ investigation: GrokInvestigation; model: string; xSearchCalls: number }> {
+export async function investigateWithGrok(handle: string): Promise<InvestigationRun & { model: string }> {
   if (!process.env.XAI_API_KEY) throw new Error("XAI_API_KEY is not configured.");
   const model = process.env.XAI_MODEL || "grok-4.5-latest";
 
+  let scoped: InvestigationRun | null = null;
   try {
-    const standard = await runInvestigation(handle, model, 180, 4, 34_000, "standard");
-    return { ...standard, model };
+    scoped = await runInvestigation(handle, model, 180, 3, 26_000, "standard", "scoped");
+    if (hasMinimumCoverage(scoped.investigation)) return { ...scoped, model };
   } catch (error) {
     if (!(error instanceof Error) || error.name !== "AbortError") throw error;
-    console.warn(`VouchGuard standard xAI scan timed out for @${handle}; trying bounded fallback scan.`);
+    console.warn(`VouchGuard scoped X Search timed out for @${handle}; switching to recovery search.`);
   }
 
+  const scopedReason = scoped
+    ? `Scoped X Search returned ${scoped.investigation.coverage.postsObserved} direct posts and ${scoped.investigation.coverage.sufficiency} coverage.`
+    : "Scoped X Search exceeded its latency budget.";
+
   try {
-    const fallback = await runInvestigation(handle, model, 90, 2, 17_000, "fallback");
-    fallback.investigation.uncertainties = [
-      "The standard-depth X investigation exceeded its latency budget, so VouchGuard used a narrower fallback scan.",
-      ...fallback.investigation.uncertainties,
+    const recovery = await runInvestigation(
+      handle,
+      model,
+      scoped ? 180 : 90,
+      scoped ? 4 : 2,
+      scoped ? 27_000 : 20_000,
+      scoped ? "standard" : "fallback",
+      "recovery",
+    );
+    recovery.investigation.uncertainties = [
+      `${scopedReason} VouchGuard used exact-author recovery search.`,
+      ...recovery.investigation.uncertainties,
     ].slice(0, 8);
-    fallback.investigation.confidence = Math.min(fallback.investigation.confidence, 0.68);
-    if (fallback.investigation.coverage.sufficiency === "sufficient") {
-      fallback.investigation.coverage.sufficiency = "limited";
-      fallback.investigation.coverage.note = `${fallback.investigation.coverage.note} Result downgraded to limited because it came from the bounded fallback scan.`;
+
+    if (!scoped) {
+      recovery.investigation.confidence = Math.min(recovery.investigation.confidence, 0.68);
+      if (recovery.investigation.coverage.sufficiency === "sufficient") {
+        recovery.investigation.coverage.sufficiency = "limited";
+        recovery.investigation.coverage.note = `${recovery.investigation.coverage.note} Coverage downgraded because the scoped pass timed out.`;
+      }
     }
-    return { ...fallback, model };
+
+    return { ...recovery, model };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("The xAI investigation timed out at both standard and fallback depth. Try the scan again.");
+      throw new Error("The xAI account investigation timed out during recovery search. Try the scan again.");
     }
     throw error;
   }
