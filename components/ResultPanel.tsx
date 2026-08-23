@@ -22,9 +22,11 @@ function pct(value: number) {
 export function ResultPanel({ result, standalone = false }: { result: IntegrityAuditResult; standalone?: boolean }) {
   const verdict = verdictMeta(result.report.verdict);
   const shareUrl = result.permalink || (typeof window !== "undefined" ? window.location.href : "");
+  const insufficient = result.report.verdict === "INSUFFICIENT_DATA";
 
   const share = () => {
-    const text = `I audited @${result.handle}'s Commons leaderboard support with VouchGuard.\n\nCommons Integrity ${result.metrics.integrityScore}/100\nOrganic Support ${result.metrics.organicSupport}\nCoordination Risk ${result.metrics.coordinationRisk}\nBot/Sybil Support Risk ${result.metrics.botSybilSupportRisk}\n\nSee how the rank was built:`;
+    const scoreText = insufficient ? "Commons Integrity: insufficient data" : `Commons Integrity ${result.metrics.integrityScore}/100`;
+    const text = `I audited @${result.handle}'s Commons leaderboard support with VouchGuard.\n\n${scoreText}\nOrganic Support ${result.metrics.organicSupport}\nCoordination Risk ${result.metrics.coordinationRisk}\nEstimated score from net support ${pct(result.stats.estimatedNetSupportShare)}\n\nSee how the rank was built:`;
     window.open(`https://x.com/intent/post?text=${encodeURIComponent(text)}&url=${encodeURIComponent(shareUrl)}`, "_blank", "noopener,noreferrer");
   };
 
@@ -46,7 +48,7 @@ export function ResultPanel({ result, standalone = false }: { result: IntegrityA
     <div className="verdict-grid">
       <div className="confidence-card">
         <span className="eyebrow">COMMONS INTEGRITY</span>
-        <div className="confidence-number">{result.metrics.integrityScore}</div>
+        <div className="confidence-number">{insufficient ? "—" : result.metrics.integrityScore}</div>
         <div className={`recommendation ${verdict.className}`}><span>{verdict.icon}</span>{verdict.label}</div>
         <p>{result.report.headline}</p>
         <p>{result.report.explanation}</p>
@@ -56,6 +58,9 @@ export function ResultPanel({ result, standalone = false }: { result: IntegrityA
         <div className="context-row"><span>Incoming slashes</span><strong>{result.stats.incomingSlashes}</strong></div>
         <div className="context-row"><span>Vouch points</span><strong>+{result.stats.vouchPoints.toLocaleString()}</strong></div>
         <div className="context-row"><span>Slash points</span><strong>-{result.stats.slashPoints.toLocaleString()}</strong></div>
+        <div className="context-row"><span>Net ledger impact</span><strong>{result.stats.netLedgerImpact >= 0 ? "+" : ""}{result.stats.netLedgerImpact.toLocaleString()}</strong></div>
+        <div className="context-row"><span>Est. pre-ledger/base</span><strong>{result.stats.estimatedTargetBasePoints.toLocaleString()}</strong></div>
+        <div className="context-row"><span>Est. score from net support</span><strong>{pct(result.stats.estimatedNetSupportShare)}</strong></div>
         <div className="context-row"><span>Unique vouchers</span><strong>{result.stats.uniqueVouchers}</strong></div>
         <div className="context-row"><span>Second-hop coverage</span><strong>{pct(result.stats.graphCoverage)}</strong></div>
         <div className="context-row"><span>Reciprocal vouchers</span><strong>{result.stats.reciprocalVoucherCount} · {pct(result.stats.reciprocalVoucherRatio)}</strong></div>
@@ -65,20 +70,24 @@ export function ResultPanel({ result, standalone = false }: { result: IntegrityA
     </div>
 
     <div className="score-grid integrity-score-grid">
-      <Score label="Organic support" value={result.metrics.organicSupport} positive />
-      <Score label="Coordination risk" value={result.metrics.coordinationRisk} />
-      <Score label="Reciprocity risk" value={result.metrics.reciprocityRisk} />
-      <Score label="Bot/Sybil support risk" value={result.metrics.botSybilSupportRisk} />
+      <Score label="Organic support" value={insufficient ? null : result.metrics.organicSupport} positive />
+      <Score label="Coordination risk" value={insufficient ? null : result.metrics.coordinationRisk} />
+      <Score label="Reciprocity risk" value={insufficient ? null : result.metrics.reciprocityRisk} />
+      <Score label="Bot/Sybil support risk" value={insufficient ? null : result.metrics.botSybilSupportRisk} />
     </div>
 
     <div className="network-grid">
+      <NetworkStat label="Net support share*" value={pct(result.stats.estimatedNetSupportShare)} />
+      <NetworkStat label="Est. base*" value={result.stats.estimatedTargetBasePoints.toLocaleString()} />
+      <NetworkStat label="Net ledger impact" value={`${result.stats.netLedgerImpact >= 0 ? "+" : ""}${result.stats.netLedgerImpact.toLocaleString()}`} />
       <NetworkStat label="Top supporter share" value={pct(result.stats.top1PointShare)} />
       <NetworkStat label="Top 5 point share" value={pct(result.stats.top5PointShare)} />
       <NetworkStat label="Internal vouch edges" value={String(result.stats.internalVouchEdges)} />
       <NetworkStat label="15m max burst" value={`${result.stats.maxVouches15m} vouches`} />
       <NetworkStat label="60m max burst" value={`${result.stats.maxVouches60m} vouches`} />
-      <NetworkStat label="Median est. base" value={result.stats.medianEstimatedBasePoints.toLocaleString()} />
+      <NetworkStat label="Median voucher base*" value={result.stats.medianEstimatedBasePoints.toLocaleString()} />
     </div>
+    <p className="estimate-note">* Estimated from the current Commons total and observed ledger impacts. These values are context for how the rank was built, not official Commons base-score fields.</p>
 
     <section className="evidence-section">
       <div className="section-heading"><div><p className="eyebrow">WHY THIS SCORE</p><h3>Observed Commons graph signals</h3></div></div>
@@ -118,7 +127,8 @@ export function ResultPanel({ result, standalone = false }: { result: IntegrityA
   </section>;
 }
 
-function Score({ label, value, positive = false }: { label: string; value: number; positive?: boolean }) {
+function Score({ label, value, positive = false }: { label: string; value: number | null; positive?: boolean }) {
+  if (value === null) return <div className="metric-card metric-warn"><div><span>{label}</span><strong>—</strong></div><div className="metric-track"><span style={{ width: "0%" }} /></div></div>;
   const level = positive ? (value >= 70 ? "good" : value >= 45 ? "warn" : "bad") : (value < 35 ? "good" : value < 65 ? "warn" : "bad");
   return <div className={`metric-card metric-${level}`}><div><span>{label}</span><strong>{value}</strong></div><div className="metric-track"><span style={{ width: `${value}%` }} /></div></div>;
 }
