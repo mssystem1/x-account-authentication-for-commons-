@@ -69,6 +69,8 @@ export interface ScanDiagnostics {
   neutralVectorDetected: boolean;
   retrievedPosts?: number;
   analysisSampleSize?: number;
+  identityCacheHit?: boolean;
+  estimatedXReadCostUsd?: number;
 }
 
 export interface ScanResult {
