@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { METHODOLOGY_VERSION } from "@/lib/scoring";
 import { blobConfigured } from "@/lib/storage";
 
 export const runtime = "nodejs";
@@ -11,6 +12,6 @@ export async function GET() {
     model: process.env.XAI_MODEL || "grok-4.5-latest",
     xaiConfigured: Boolean(process.env.XAI_API_KEY),
     storage: blobConfigured() ? "vercel-blob" : "stateless",
-    methodologyVersion: "vg-2026.08.1",
+    methodologyVersion: METHODOLOGY_VERSION,
   });
 }
