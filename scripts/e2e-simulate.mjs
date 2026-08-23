@@ -27,7 +27,8 @@ try {
   const health = await fetch(`${base}/api/health`).then((response) => response.json());
   if (health.mode !== "demo" || health.primaryData !== "commons-ledger") throw new Error("Health endpoint is not in Commons demo mode.");
 
-  for (const handle of ["alice_builder", "organic_creator", "bot_swarm_01"]) {
+  const handles = ["alice_builder", "organic_creator", "bot_swarm_01", "attacked_victim"];
+  for (const handle of handles) {
     const response = await fetch(`${base}/api/scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -35,14 +36,17 @@ try {
     });
     if (!response.ok) throw new Error(`Audit failed for ${handle}: ${await response.text()}`);
     const result = await response.json();
-    if (result.handle !== handle || typeof result.metrics?.integrityScore !== "number") throw new Error(`Malformed integrity result for ${handle}`);
+    if (result.handle !== handle || typeof result.metrics?.supportIntegrity !== "number" || typeof result.metrics?.slashAttackRisk !== "number") {
+      throw new Error(`Malformed dual-axis result for ${handle}`);
+    }
     if (!Array.isArray(result.supporters) || !Array.isArray(result.sourceEntries)) throw new Error(`Missing graph data for ${handle}`);
-    console.log(`${handle}: ${result.report.verdict} · Commons integrity ${result.metrics.integrityScore}`);
+    if (handle === "attacked_victim" && result.report.verdict === "LIKELY_ORGANIC") throw new Error("Attack-victim regression: blanket organic verdict returned");
+    console.log(`${handle}: ${result.report.verdict} · support ${result.metrics.supportIntegrity} · slash attack ${result.metrics.slashAttackRisk}`);
   }
 
   const home = await fetch(base).then((response) => response.text());
   if (!home.includes("Audit the")) throw new Error("Home page smoke check failed.");
-  console.log("E2E Commons integrity simulation passed.");
+  console.log("E2E dual-axis Commons rank audit simulation passed.");
 } finally {
   child.kill("SIGTERM");
 }
