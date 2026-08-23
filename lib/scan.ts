@@ -25,6 +25,8 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
     directTargetSources,
     retrievedPosts,
     analysisSampleSize,
+    identityCacheHit,
+    estimatedXReadCostUsd,
   } = demo
     ? {
         investigation: demoInvestigation(handle),
@@ -35,6 +37,8 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
         directTargetSources: 0,
         retrievedPosts: undefined,
         analysisSampleSize: undefined,
+        identityCacheHit: undefined,
+        estimatedXReadCostUsd: undefined,
       }
     : await investigateWithGrok(handle);
 
@@ -83,6 +87,8 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
       neutralVectorDetected,
       retrievedPosts,
       analysisSampleSize,
+      identityCacheHit,
+      estimatedXReadCostUsd,
     },
     evidence: investigation.evidence,
     uncertainties: investigation.uncertainties,
