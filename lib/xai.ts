@@ -20,6 +20,8 @@ interface InvestigationRun {
   directTargetSources: number;
   retrievedPosts?: number;
   analysisSampleSize?: number;
+  identityCacheHit?: boolean;
+  estimatedXReadCostUsd?: number;
 }
 
 function responseText(response: XaiResponse): string {
@@ -82,6 +84,12 @@ function enforceRecoveryEvidence(run: InvestigationRun): InvestigationRun {
 
 async function analyzeOfficialXSample(handle: string, model: string): Promise<InvestigationRun> {
   const sample = await fetchXAccountSample(handle);
+  const diagnostics = {
+    retrievedPosts: sample.rawPostsRetrieved,
+    analysisSampleSize: sample.posts.length,
+    identityCacheHit: sample.identityCacheHit,
+    estimatedXReadCostUsd: sample.estimatedXReadCostUsd,
+  };
 
   if (sample.coverage.sufficiency === "insufficient") {
     return {
@@ -108,8 +116,7 @@ async function analyzeOfficialXSample(handle: string, model: string): Promise<In
       webSearchCalls: 0,
       retrievalMode: "x-api",
       directTargetSources: 0,
-      retrievedPosts: sample.rawPostsRetrieved,
-      analysisSampleSize: sample.posts.length,
+      ...diagnostics,
     };
   }
 
@@ -150,6 +157,10 @@ async function analyzeOfficialXSample(handle: string, model: string): Promise<In
     investigation.profile = sample.profile;
     investigation.coverage = sample.coverage;
 
+    // A five-post quick scan is intentionally cost-bounded. Even when the model is
+    // very certain, do not present the same confidence as a much larger benchmark sample.
+    investigation.confidence = Math.min(investigation.confidence, 0.78);
+
     const allowedUrls = new Set(sample.posts.map((post) => post.url));
     for (const item of investigation.evidence) {
       item.sourceUrls = item.sourceUrls.filter((url) => allowedUrls.has(url));
@@ -170,8 +181,7 @@ async function analyzeOfficialXSample(handle: string, model: string): Promise<In
       webSearchCalls: 0,
       retrievalMode: "x-api",
       directTargetSources: directSources,
-      retrievedPosts: sample.rawPostsRetrieved,
-      analysisSampleSize: sample.posts.length,
+      ...diagnostics,
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
