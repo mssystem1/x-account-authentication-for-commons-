@@ -17,12 +17,10 @@ jobs:
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
-      X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
       VERCEL_PROJECT_NAME: vouchguard-ai
       PRODUCTION_DOMAIN: vouchguard-ai.vercel.app
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -33,20 +31,18 @@ jobs:
           set -euo pipefail
           test -n "$VERCEL_TOKEN" || { echo "VERCEL_TOKEN is missing"; exit 1; }
           test -n "$XAI_API_KEY" || { echo "XAI_API_KEY is missing"; exit 1; }
-          test -n "$X_BEARER_TOKEN" || { echo "X_BEARER_TOKEN is missing"; exit 1; }
-          echo "Required deployment credentials are configured."
+          echo "Deployment credentials are configured."
 
-      - name: Install application dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Validate application before deployment
+      - name: Install and validate
         env:
           VOUCHGUARD_DEMO_MODE: "true"
           NEXT_TELEMETRY_DISABLED: "1"
         run: |
+          npm install --no-audit --no-fund
           npm run typecheck
           npm test
           npm run build
+          npm run test:e2e
 
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
@@ -56,7 +52,6 @@ jobs:
         run: |
           set -euo pipefail
           if ! vercel project inspect "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/dev/null 2>&1; then
-            echo "Creating Vercel project $VERCEL_PROJECT_NAME"
             vercel api /v9/projects -X POST -F "name=$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/tmp/vercel-project.json
           fi
           vercel link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN"
@@ -66,7 +61,6 @@ jobs:
         run: |
           set -euo pipefail
           printf '%s' "$XAI_API_KEY" > /tmp/xai-key
-          printf '%s' "$X_BEARER_TOKEN" > /tmp/x-bearer
           printf '%s' 'grok-4.5-latest' > /tmp/xai-model
           printf '%s' '21600' > /tmp/cache-ttl
           printf '%s' '12' > /tmp/rate-limit
@@ -74,25 +68,20 @@ jobs:
           printf '%s' "https://$PRODUCTION_DOMAIN" > /tmp/app-url
 
           vercel env add XAI_API_KEY production --sensitive --force --token "$VERCEL_TOKEN" < /tmp/xai-key
-          vercel env add X_BEARER_TOKEN production --sensitive --force --token "$VERCEL_TOKEN" < /tmp/x-bearer
           vercel env add XAI_MODEL production --force --token "$VERCEL_TOKEN" < /tmp/xai-model
           vercel env add SCAN_CACHE_TTL_SECONDS production --force --token "$VERCEL_TOKEN" < /tmp/cache-ttl
           vercel env add SCAN_RATE_LIMIT_PER_MINUTE production --force --token "$VERCEL_TOKEN" < /tmp/rate-limit
           vercel env add VOUCHGUARD_DEMO_MODE production --force --token "$VERCEL_TOKEN" < /tmp/demo-mode
           vercel env add NEXT_PUBLIC_APP_URL production --no-sensitive --force --token "$VERCEL_TOKEN" < /tmp/app-url
-          rm -f /tmp/xai-key /tmp/x-bearer /tmp/xai-model /tmp/cache-ttl /tmp/rate-limit /tmp/demo-mode /tmp/app-url
+          rm -f /tmp/xai-key /tmp/xai-model /tmp/cache-ttl /tmp/rate-limit /tmp/demo-mode /tmp/app-url
 
       - name: Ensure Vercel Blob store exists
         shell: bash
         run: |
           set -euo pipefail
-          if vercel blob create-store vouchguard-cache --access public --token "$VERCEL_TOKEN"; then
-            echo "Created vouchguard-cache Blob store."
-          else
-            echo "vouchguard-cache already exists or was previously provisioned; live health validation will verify the application storage adapter."
-          fi
+          vercel blob create-store vouchguard-cache --access public --token "$VERCEL_TOKEN" || true
 
-      - name: Deploy one production build
+      - name: Deploy production
         id: deploy
         shell: bash
         run: |
@@ -101,15 +90,13 @@ jobs:
           echo "url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
           echo "Generated production deployment: $DEPLOYMENT_URL"
 
-      - name: Assign canonical production domain
+      - name: Assign canonical domain
         shell: bash
         run: |
           set -euo pipefail
-          DEPLOYMENT_URL='${{ steps.deploy.outputs.url }}'
-          vercel alias set "$DEPLOYMENT_URL" "$PRODUCTION_DOMAIN" --token "$VERCEL_TOKEN"
-          echo "Canonical domain assigned: https://$PRODUCTION_DOMAIN"
+          vercel alias set '${{ steps.deploy.outputs.url }}' "$PRODUCTION_DOMAIN" --token "$VERCEL_TOKEN"
 
-      - name: Verify public production application
+      - name: Verify public Commons integrity app
         shell: bash
         run: |
           set -euo pipefail
@@ -117,24 +104,15 @@ jobs:
           for attempt in {1..24}; do
             ROOT_STATUS="$(curl --location --silent --output /tmp/root.html --write-out '%{http_code}' "$URL/" || true)"
             HEALTH_STATUS="$(curl --location --silent --output /tmp/health.json --write-out '%{http_code}' "$URL/api/health" || true)"
-            CONTENT_TYPE="$(curl --location --silent --output /dev/null --write-out '%{content_type}' "$URL/api/health" || true)"
-            echo "Attempt $attempt: root=$ROOT_STATUS health=$HEALTH_STATUS content-type=$CONTENT_TYPE"
-
-            if [ "$ROOT_STATUS" = "200" ] && [ "$HEALTH_STATUS" = "200" ] && [[ "$CONTENT_TYPE" == application/json* ]]; then
-              node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/health.json","utf8")); if(!h.ok || h.mode!=="live" || !h.xaiConfigured || !h.xApiConfigured || h.retrieval!=="official-x-api" || h.storage!=="vercel-blob") { console.error("Invalid production health", h); process.exit(1); } console.log("Production health passed", h)'
-              if grep -qi '<html' /tmp/root.html; then
-                echo "Public application and API are reachable."
+            if [ "$ROOT_STATUS" = "200" ] && [ "$HEALTH_STATUS" = "200" ]; then
+              if node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/health.json","utf8")); if(!h.ok || h.mode!=="live" || h.primaryData!=="commons-ledger" || h.xApiRequired!==false || h.methodologyVersion!=="vg-commons-2026.08.1") process.exit(1); console.log("Production health passed",h)'; then
                 exit 0
               fi
             fi
             sleep 5
           done
-
-          echo "Public production validation failed: https://$PRODUCTION_DOMAIN"
-          head -c 500 /tmp/root.html || true
-          echo
-          head -c 500 /tmp/health.json || true
-          echo
+          echo "Production validation failed"
+          cat /tmp/health.json || true
           exit 1
 
       - name: Production URL summary
