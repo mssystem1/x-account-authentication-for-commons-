@@ -86,3 +86,5 @@ jobs:
           done
           echo "Production health check did not pass."
           exit 1
+
+# validation trigger: live production deployment
