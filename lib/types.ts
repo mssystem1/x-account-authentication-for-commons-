@@ -1,7 +1,8 @@
 export type RiskCategory = "authenticity" | "farmer" | "bot" | "sybil";
 export type EvidenceImpact = "positive" | "warning" | "risk";
-export type Recommendation = "VOUCH" | "SKIP" | "REVIEW_SLASH";
+export type Recommendation = "VOUCH" | "SKIP" | "REVIEW_SLASH" | "UNSCORABLE";
 export type ConfidenceLabel = "low" | "medium" | "high";
+export type DataSufficiency = "sufficient" | "limited" | "insufficient";
 
 export interface AccountProfile {
   handle: string;
@@ -9,6 +10,14 @@ export interface AccountProfile {
   bioSummary: string;
   accountHistory: string;
   activitySummary: string;
+}
+
+export interface InvestigationCoverage {
+  profileResolved: boolean;
+  postsObserved: number;
+  distinctDaysObserved: number;
+  sufficiency: DataSufficiency;
+  note: string;
 }
 
 export interface GrokMetrics {
@@ -35,6 +44,7 @@ export interface EvidenceItem {
 
 export interface GrokInvestigation {
   profile: AccountProfile;
+  coverage: InvestigationCoverage;
   metrics: GrokMetrics;
   evidence: EvidenceItem[];
   summary: string;
@@ -50,18 +60,25 @@ export interface RiskScores {
   vouchConfidence: number;
 }
 
+export interface ScanDiagnostics {
+  xSearchCalls: number;
+  neutralVectorDetected: boolean;
+}
+
 export interface ScanResult {
   id: string;
   handle: string;
   createdAt: string;
   model: string;
   mode: "live" | "demo";
-  scores: RiskScores;
+  scores: RiskScores | null;
   confidence: number;
   confidenceLabel: ConfidenceLabel;
   recommendation: Recommendation;
   summary: string;
   profile: AccountProfile;
+  coverage: InvestigationCoverage;
+  diagnostics: ScanDiagnostics;
   evidence: EvidenceItem[];
   uncertainties: string[];
   sourceUrls: string[];
