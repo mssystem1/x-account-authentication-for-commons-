@@ -58,7 +58,9 @@ export function ResultPanel({ result, standalone = false }: { result: ScanResult
         <div><span>Activity</span><p>{result.profile.activitySummary}</p></div>
         <div className="context-row"><span>Data coverage</span><strong>{result.coverage.postsObserved} posts · {result.coverage.distinctDaysObserved} days</strong></div>
         <div className="context-row"><span>Coverage status</span><strong>{result.coverage.sufficiency}</strong></div>
-        <div className="context-row"><span>X Search calls</span><strong>{result.diagnostics.xSearchCalls}</strong></div>
+        <div className="context-row"><span>Retrieval mode</span><strong>{result.diagnostics.retrievalMode}</strong></div>
+        <div className="context-row"><span>Search calls</span><strong>{result.diagnostics.xSearchCalls} X · {result.diagnostics.webSearchCalls} web</strong></div>
+        <div className="context-row"><span>Verified target posts</span><strong>{result.diagnostics.directTargetSources}</strong></div>
         <div className="context-row"><span>AI confidence</span><strong>{Math.round(result.confidence * 100)}% · {result.confidenceLabel}</strong></div>
         <div className="context-row"><span>Public X sources</span><strong>{sourceCount}</strong></div>
         <div className="context-row"><span>Model</span><strong>{result.model}</strong></div>
