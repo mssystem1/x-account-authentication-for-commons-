@@ -1,12 +1,13 @@
 import { fetchCommonsLedger } from "./commons.ts";
 import { buildGrokIntegrityReport } from "./grok-integrity.ts";
 import { buildIntegrityEvidence, buildSupporterProfiles, calculateIntegrityMetrics, calculateNetworkStats } from "./integrity.ts";
-import type { CommonsLedger, IntegrityAuditResult } from "./integrity-types.ts";
+import type { CommonsActionKind, CommonsLedger, IntegrityAuditResult } from "./integrity-types.ts";
 import { appOrigin, normalizeHandle } from "./utils.ts";
 import { isFreshIntegrityAudit, readIntegrityAudit, writeIntegrityAudit } from "./storage.ts";
 
-export const INTEGRITY_METHODOLOGY_VERSION = "vg-commons-2026.08.2";
-const MAX_SECOND_HOP = 40;
+export const INTEGRITY_METHODOLOGY_VERSION = "vg-commons-2026.08.3";
+const MAX_VOUCH_SECOND_HOP = 30;
+const MAX_SLASH_SECOND_HOP = 30;
 const CONCURRENCY = 6;
 
 async function mapConcurrent<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
@@ -23,43 +24,90 @@ async function mapConcurrent<T, R>(items: T[], limit: number, worker: (item: T) 
   return results;
 }
 
-function secondHopHandles(target: CommonsLedger): string[] {
-  const byHandle = new Map<string, { handle: string; priority: number; vouch: boolean }>();
+function secondHopHandlesForAction(target: CommonsLedger, kind: CommonsActionKind, limit: number): string[] {
+  const rows = new Map<string, { handle: string; impact: number; latest: number }>();
   for (const entry of target.entries) {
+    if (entry.kind !== kind) continue;
     const key = entry.authorHandle.toLowerCase();
-    const current = byHandle.get(key);
-    const priority = Math.abs(entry.points);
-    if (!current) byHandle.set(key, { handle: entry.authorHandle, priority, vouch: entry.kind === "vouch" });
+    const timestamp = entry.createdAt ? Date.parse(entry.createdAt) : 0;
+    const current = rows.get(key);
+    if (!current) rows.set(key, { handle: entry.authorHandle, impact: Math.abs(entry.points), latest: Number.isFinite(timestamp) ? timestamp : 0 });
     else {
-      current.priority = Math.max(current.priority, priority);
-      current.vouch ||= entry.kind === "vouch";
+      current.impact = Math.max(current.impact, Math.abs(entry.points));
+      current.latest = Math.max(current.latest, Number.isFinite(timestamp) ? timestamp : 0);
     }
   }
-  return [...byHandle.values()]
-    .sort((a, b) => Number(b.vouch) - Number(a.vouch) || b.priority - a.priority)
-    .slice(0, MAX_SECOND_HOP)
-    .map((row) => row.handle);
+
+  const values = [...rows.values()];
+  if (values.length <= limit) return values.map((row) => row.handle);
+
+  // Split the sample between high-impact actors and recent actors. High-impact sampling captures
+  // who moved the score most; recent sampling captures coordinated bursts that would otherwise be missed.
+  const impactBudget = Math.ceil(limit * 0.60);
+  const selected = new Map<string, string>();
+  for (const row of [...values].sort((a, b) => b.impact - a.impact).slice(0, impactBudget)) {
+    selected.set(row.handle.toLowerCase(), row.handle);
+  }
+  for (const row of [...values].sort((a, b) => b.latest - a.latest)) {
+    if (selected.size >= limit) break;
+    selected.set(row.handle.toLowerCase(), row.handle);
+  }
+  return [...selected.values()];
+}
+
+function secondHopHandles(target: CommonsLedger): string[] {
+  const vouchers = secondHopHandlesForAction(target, "vouch", MAX_VOUCH_SECOND_HOP);
+  const slashers = secondHopHandlesForAction(target, "slash", MAX_SLASH_SECOND_HOP);
+  const union = new Map<string, string>();
+  for (const handle of [...vouchers, ...slashers]) union.set(handle.toLowerCase(), handle);
+  return [...union.values()];
 }
 
 function demoLedger(handle: string): { target: CommonsLedger; supporterLedgers: Map<string, CommonsLedger | null> } {
-  const risky = /bot|sybil|ring|farm|swarm/i.test(handle);
+  const supportRing = /bot|sybil|ring|farm|swarm/i.test(handle);
+  const attackVictim = /attack|victim|slashed/i.test(handle);
   const now = Date.now();
-  const voucherCount = risky ? 12 : 14;
-  const entries = Array.from({ length: voucherCount }, (_, index) => ({
+  const voucherCount = supportRing ? 12 : 14;
+  const entries: CommonsLedger["entries"] = Array.from({ length: voucherCount }, (_, index) => ({
     kind: "vouch" as const,
-    authorHandle: risky ? `ring_${index + 1}` : `creator_${index + 1}`,
+    authorHandle: supportRing ? `ring_${index + 1}` : `creator_${index + 1}`,
     authorAvatarUrl: null,
-    points: risky ? 5000 + (index % 3) * 500 : 12000 + index * 1100,
+    points: supportRing ? 5000 + (index % 3) * 500 : 12000 + index * 1100,
     tweetText: "Synthetic Commons vouch for test mode.",
     tweetUrl: null,
-    createdAt: new Date(now - (risky ? index * 2 * 60_000 : index * 8 * 60 * 60_000)).toISOString(),
+    createdAt: new Date(now - (supportRing ? index * 2 * 60_000 : index * 8 * 60 * 60_000)).toISOString(),
   }));
-  const target: CommonsLedger = { handle, display: `@${handle}`, rank: risky ? 118 : 642, totalPoints: risky ? 410000 : 488000, entries };
+
+  if (attackVictim) {
+    for (let index = 0; index < 28; index++) {
+      entries.push({
+        kind: "slash",
+        authorHandle: `attacker_${index + 1}`,
+        authorAvatarUrl: null,
+        points: -(9000 + (index % 6) * 1800),
+        tweetText: "Synthetic coordinated slash for test mode.",
+        tweetUrl: null,
+        createdAt: new Date(now - index * 90_000).toISOString(),
+      });
+    }
+  }
+
+  const vouchTotal = entries.filter((entry) => entry.kind === "vouch").reduce((sum, entry) => sum + Math.abs(entry.points), 0);
+  const slashTotal = entries.filter((entry) => entry.kind === "slash").reduce((sum, entry) => sum + Math.abs(entry.points), 0);
+  const base = attackVictim ? 180000 : 300000;
+  const target: CommonsLedger = {
+    handle,
+    display: `@${handle}`,
+    rank: attackVictim ? 94000 : supportRing ? 118 : 642,
+    totalPoints: base + vouchTotal - slashTotal,
+    entries,
+  };
   const supporterLedgers = new Map<string, CommonsLedger | null>();
+
   for (let index = 0; index < voucherCount; index++) {
     const supporter = entries[index]!;
     const incoming = [] as CommonsLedger["entries"];
-    if (risky) {
+    if (supportRing) {
       const previous = entries[(index + voucherCount - 1) % voucherCount]!;
       const next = entries[(index + 1) % voucherCount]!;
       incoming.push({ ...previous, authorHandle: previous.authorHandle, points: 4900, createdAt: new Date(now - index * 2 * 60_000).toISOString() });
@@ -76,6 +124,26 @@ function demoLedger(handle: string): { target: CommonsLedger; supporterLedgers: 
       entries: incoming,
     });
   }
+
+  if (attackVictim) {
+    const attackEntries = entries.filter((entry) => entry.kind === "slash");
+    for (let index = 0; index < attackEntries.length; index++) {
+      const attacker = attackEntries[index]!;
+      const previous = attackEntries[(index + attackEntries.length - 1) % attackEntries.length]!;
+      const next = attackEntries[(index + 1) % attackEntries.length]!;
+      supporterLedgers.set(attacker.authorHandle.toLowerCase(), {
+        handle: attacker.authorHandle,
+        display: attacker.authorHandle,
+        rank: 7000 + index,
+        totalPoints: 10000 + index * 300,
+        entries: [
+          { ...previous, kind: "vouch", authorHandle: previous.authorHandle, points: 2500, createdAt: new Date(now - index * 90_000).toISOString() },
+          { ...next, kind: "vouch", authorHandle: next.authorHandle, points: 2500, createdAt: new Date(now - index * 90_000).toISOString() },
+        ],
+      });
+    }
+  }
+
   return { target, supporterLedgers };
 }
 
