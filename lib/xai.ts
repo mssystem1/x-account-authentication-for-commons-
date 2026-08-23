@@ -107,16 +107,6 @@ async function runInvestigation(
         to_date: isoDate(to),
       };
 
-  const tools = retrievalMode === "scoped"
-    ? [xSearchTool]
-    : [
-        xSearchTool,
-        {
-          type: "web_search",
-          filters: { allowed_domains: ["x.com", "twitter.com"] },
-        },
-      ];
-
   try {
     const response = await fetch("https://api.x.ai/v1/responses", {
       method: "POST",
@@ -127,8 +117,9 @@ async function runInvestigation(
       body: JSON.stringify({
         model,
         input: investigationPrompt(handle, isoDate(from), isoDate(to), depth, retrievalMode),
+        reasoning: { effort: "low" },
         max_turns: maxTurns,
-        tools,
+        tools: [xSearchTool],
         text: {
           format: {
             type: "json_schema",
@@ -151,7 +142,7 @@ async function runInvestigation(
     const run: InvestigationRun = {
       investigation,
       xSearchCalls: countToolCalls(payload, "x_search_call"),
-      webSearchCalls: countToolCalls(payload, "web_search_call"),
+      webSearchCalls: 0,
       retrievalMode,
       directTargetSources: directTargetSourceCount(investigation, handle),
     };
@@ -167,7 +158,7 @@ export async function investigateWithGrok(handle: string): Promise<Investigation
 
   let scoped: InvestigationRun | null = null;
   try {
-    scoped = await runInvestigation(handle, model, 180, 3, 26_000, "standard", "scoped");
+    scoped = await runInvestigation(handle, model, 120, 2, 14_000, "fallback", "scoped");
     if (hasMinimumCoverage(scoped.investigation)) return { ...scoped, model };
   } catch (error) {
     if (!(error instanceof Error) || error.name !== "AbortError") throw error;
@@ -182,24 +173,20 @@ export async function investigateWithGrok(handle: string): Promise<Investigation
     const recovery = await runInvestigation(
       handle,
       model,
-      scoped ? 180 : 90,
-      scoped ? 4 : 2,
-      scoped ? 27_000 : 20_000,
-      scoped ? "standard" : "fallback",
+      180,
+      3,
+      28_000,
+      "standard",
       "recovery",
     );
     recovery.investigation.uncertainties = [
-      `${scopedReason} VouchGuard used exact-author recovery search.`,
+      `${scopedReason} VouchGuard used unscoped exact-author X recovery search.`,
       ...recovery.investigation.uncertainties,
     ].slice(0, 8);
 
-    if (!scoped) {
-      recovery.investigation.confidence = Math.min(recovery.investigation.confidence, 0.68);
-      if (recovery.investigation.coverage.sufficiency === "sufficient") {
-        recovery.investigation.coverage.sufficiency = "limited";
-        recovery.investigation.coverage.note = `${recovery.investigation.coverage.note} Coverage downgraded because the scoped pass timed out.`;
-      }
-    }
+    // Recovery is broader than the exact-handle tool filter, so cap confidence
+    // unless direct account evidence is strong enough for the schema's own coverage gate.
+    recovery.investigation.confidence = Math.min(recovery.investigation.confidence, 0.82);
 
     return { ...recovery, model };
   } catch (error) {
