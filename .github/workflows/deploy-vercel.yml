@@ -4,15 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths:
-      - ".github/workflows/deploy-vercel.yml"
-  pull_request:
-    branches: [main]
-    paths:
-      - ".github/workflows/deploy-vercel.yml"
 
 permissions:
   contents: read
+
+concurrency:
+  group: vouchguard-production
+  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -53,17 +51,36 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
-      - name: Create or link Vercel project
+      - name: Link Vercel project
         shell: bash
         run: |
           set -euo pipefail
           if ! vercel project inspect "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/dev/null 2>&1; then
             echo "Creating Vercel project $VERCEL_PROJECT_NAME"
             vercel api /v9/projects -X POST -F "name=$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/tmp/vercel-project.json
-          else
-            echo "Vercel project already exists."
           fi
           vercel link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN"
+
+      - name: Use GitHub Actions as the single deployment source
+        shell: bash
+        run: |
+          set -euo pipefail
+          vercel git disconnect --yes --token "$VERCEL_TOKEN" || true
+          echo "Vercel Git auto-deploy is disconnected to prevent duplicate production deployments and alias races."
+
+      - name: Restore standard deployment protection
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/protection.json <<'JSON'
+          {
+            "ssoProtection": {
+              "deploymentType": "prod_deployment_urls_and_all_previews"
+            }
+          }
+          JSON
+          vercel api "/v9/projects/$VERCEL_PROJECT_NAME" -X PATCH --input /tmp/protection.json --token "$VERCEL_TOKEN" >/tmp/protection-result.json
+          node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync("/tmp/protection-result.json","utf8")); console.log("ssoProtection", p.ssoProtection ?? null)'
 
       - name: Configure production environment
         shell: bash
@@ -84,20 +101,17 @@ jobs:
           vercel env add NEXT_PUBLIC_APP_URL production --no-sensitive --force --token "$VERCEL_TOKEN" < /tmp/app-url
           rm -f /tmp/xai-key /tmp/xai-model /tmp/cache-ttl /tmp/rate-limit /tmp/demo-mode /tmp/app-url
 
-      - name: Create or verify Vercel Blob cache
+      - name: Ensure Vercel Blob store exists
         shell: bash
         run: |
           set -euo pipefail
           if vercel blob create-store vouchguard-cache --access public --token "$VERCEL_TOKEN"; then
-            echo "Created and connected vouchguard-cache Blob store."
+            echo "Created vouchguard-cache Blob store."
           else
-            echo "Blob store creation returned a non-zero status. It may already exist; continuing to deployment and validating storage via /api/health."
+            echo "vouchguard-cache already exists or was previously provisioned; live health validation will verify the application storage adapter."
           fi
 
-      - name: Connect GitHub repository
-        run: vercel git connect --yes --token "$VERCEL_TOKEN" || echo "Git integration could not be connected automatically; CLI deployment will still proceed."
-
-      - name: Deploy production
+      - name: Deploy one production build
         id: deploy
         shell: bash
         run: |
@@ -106,30 +120,15 @@ jobs:
           echo "url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
           echo "Generated production deployment: $DEPLOYMENT_URL"
 
-      - name: Assign canonical production alias
+      - name: Assign canonical production domain
         shell: bash
         run: |
           set -euo pipefail
           DEPLOYMENT_URL='${{ steps.deploy.outputs.url }}'
-          echo "Assigning $PRODUCTION_DOMAIN to $DEPLOYMENT_URL"
           vercel alias set "$DEPLOYMENT_URL" "$PRODUCTION_DOMAIN" --token "$VERCEL_TOKEN"
+          echo "Canonical domain assigned: https://$PRODUCTION_DOMAIN"
 
-      - name: Verify generated deployment
-        shell: bash
-        run: |
-          set -euo pipefail
-          URL='${{ steps.deploy.outputs.url }}'
-          for attempt in {1..18}; do
-            if curl --location --fail --silent --show-error "$URL/" >/tmp/root.html && curl --location --fail --silent --show-error "$URL/api/health" >/tmp/health-generated.json; then
-              echo "Generated deployment is reachable."
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "Generated deployment URL is not reachable."
-          exit 1
-
-      - name: Verify canonical production URL and storage
+      - name: Verify public production application
         shell: bash
         run: |
           set -euo pipefail
@@ -137,22 +136,28 @@ jobs:
           for attempt in {1..24}; do
             ROOT_STATUS="$(curl --location --silent --output /tmp/root.html --write-out '%{http_code}' "$URL/" || true)"
             HEALTH_STATUS="$(curl --location --silent --output /tmp/health.json --write-out '%{http_code}' "$URL/api/health" || true)"
-            echo "Attempt $attempt: root=$ROOT_STATUS health=$HEALTH_STATUS"
-            if [ "$ROOT_STATUS" = "200" ] && [ "$HEALTH_STATUS" = "200" ]; then
-              node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/health.json","utf8")); if(!h.ok || h.mode!=="live" || !h.xaiConfigured || h.storage!=="vercel-blob") { console.error("Invalid production health", h); process.exit(1); } console.log("Canonical production URL, xAI config, and Blob storage passed", h)'
-              exit 0
+            CONTENT_TYPE="$(curl --location --silent --output /dev/null --write-out '%{content_type}' "$URL/api/health" || true)"
+            echo "Attempt $attempt: root=$ROOT_STATUS health=$HEALTH_STATUS content-type=$CONTENT_TYPE"
+
+            if [ "$ROOT_STATUS" = "200" ] && [ "$HEALTH_STATUS" = "200" ] && [[ "$CONTENT_TYPE" == application/json* ]]; then
+              node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/health.json","utf8")); if(!h.ok || h.mode!=="live" || !h.xaiConfigured || h.storage!=="vercel-blob") { console.error("Invalid production health", h); process.exit(1); } console.log("Production health passed", h)'
+              if grep -qi '<html' /tmp/root.html; then
+                echo "Public application and API are reachable."
+                exit 0
+              fi
             fi
-            if grep -q '404: NOT_FOUND' /tmp/root.html 2>/dev/null; then
-              echo "Canonical alias still returns Vercel NOT_FOUND; retrying while alias propagates."
+
+            if grep -q 'NOT_FOUND' /tmp/root.html 2>/dev/null; then
+              echo "Vercel edge is still returning platform NOT_FOUND; retrying."
             fi
             sleep 5
           done
-          echo "Canonical production URL failed validation: https://$PRODUCTION_DOMAIN"
-          echo "Root response:"
-          head -c 1000 /tmp/root.html || true
+
+          echo "Public production validation failed: https://$PRODUCTION_DOMAIN"
+          echo "This gate intentionally fails if Vercel reports a Ready deployment but its edge does not route the public domain."
+          head -c 500 /tmp/root.html || true
           echo
-          echo "Health response:"
-          head -c 1000 /tmp/health.json || true
+          head -c 500 /tmp/health.json || true
           echo
           exit 1
 
