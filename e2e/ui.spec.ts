@@ -87,11 +87,13 @@ test("unscorable response never renders fake numeric scores", async ({ page }) =
           neutralVectorDetected: false,
           retrievedPosts: 2,
           analysisSampleSize: 2,
+          identityCacheHit: false,
+          estimatedXReadCostUsd: 0.02,
         },
         evidence: [],
         uncertainties: ["Sparse public activity."],
         sourceUrls: [],
-        methodologyVersion: "vg-2026.08.6",
+        methodologyVersion: "vg-2026.08.7",
         cached: false,
         permalink: "/u/missing_account",
       }),
@@ -113,6 +115,6 @@ test("methodology page remains readable on phone viewport", async ({ page }) => 
   await page.setViewportSize({ width: 360, height: 800 });
   await page.goto("/methodology");
   await expect(page.getByRole("heading", { name: "Account behavior, not one post." })).toBeVisible();
-  await expect(page.getByText(/VG-2026\.08\.6/i)).toBeVisible();
+  await expect(page.getByText(/VG-2026\.08\.7/i)).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
