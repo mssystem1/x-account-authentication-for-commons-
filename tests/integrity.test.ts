@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSupporterProfiles, calculateIntegrityMetrics, calculateNetworkStats } from "../lib/integrity.ts";
+import { buildSupporterProfiles, calculateIntegrityMetrics, calculateNetworkStats, deterministicVerdict } from "../lib/integrity.ts";
 import type { CommonsLedger } from "../lib/integrity-types.ts";
 
 function targetLedger(handles: string[], closeTiming = false): CommonsLedger {
@@ -65,7 +65,36 @@ function ringLedgers(handles: string[]): Map<string, CommonsLedger | null> {
   return map;
 }
 
-test("independent Commons supporters produce strong organic score", () => {
+function addSlashWave(target: CommonsLedger, count: number, closeTiming = true) {
+  const now = Date.now();
+  for (let index = 0; index < count; index++) {
+    target.entries.push({
+      kind: "slash",
+      authorHandle: `slasher_${index}`,
+      authorAvatarUrl: null,
+      points: -(9000 + (index % 5) * 1000),
+      tweetText: "slash",
+      tweetUrl: null,
+      createdAt: new Date(now - index * (closeTiming ? 75_000 : 6 * 60 * 60_000)).toISOString(),
+    });
+  }
+}
+
+function addIndependentSlasherLedgers(ledgers: Map<string, CommonsLedger | null>, count: number) {
+  for (let index = 0; index < count; index++) {
+    ledgers.set(`slasher_${index}`, {
+      handle: `slasher_${index}`,
+      display: `slasher_${index}`,
+      rank: 6000 + index,
+      totalPoints: 20000,
+      entries: [
+        { kind: "vouch", authorHandle: `outside_slasher_${index}`, authorAvatarUrl: null, points: 5000, tweetText: "vouch", tweetUrl: null, createdAt: new Date().toISOString() },
+      ],
+    });
+  }
+}
+
+test("independent Commons supporters produce strong support integrity", () => {
   const handles = Array.from({ length: 12 }, (_, i) => `creator_${i}`);
   const target = targetLedger(handles, false);
   const ledgers = independentLedgers(handles);
@@ -74,9 +103,10 @@ test("independent Commons supporters produce strong organic score", () => {
   const metrics = calculateIntegrityMetrics(stats);
 
   assert.equal(stats.reciprocalVoucherCount, 0);
-  assert.equal(stats.internalVouchEdges, 0);
-  assert.ok(metrics.organicSupport >= 75);
-  assert.ok(metrics.coordinationRisk < 35);
+  assert.equal(stats.internalVoucherVouchEdges, 0);
+  assert.ok(metrics.supportIntegrity >= 75);
+  assert.ok(metrics.supportCoordinationRisk < 35);
+  assert.ok(metrics.slashAttackRisk < 20);
 });
 
 test("rank-dependence context reconstructs estimated pre-ledger contribution", () => {
@@ -97,15 +127,7 @@ test("slashes reduce net support contribution without being treated as base scor
   const handles = ["creator_a", "creator_b"];
   const target = targetLedger(handles, false);
   target.totalPoints = 120000;
-  target.entries.push({
-    kind: "slash",
-    authorHandle: "slasher",
-    authorAvatarUrl: null,
-    points: -5000,
-    tweetText: "slash",
-    tweetUrl: null,
-    createdAt: new Date().toISOString(),
-  });
+  target.entries.push({ kind: "slash", authorHandle: "slasher", authorAvatarUrl: null, points: -5000, tweetText: "slash", tweetUrl: null, createdAt: new Date().toISOString() });
   const ledgers = independentLedgers(handles);
   const profiles = buildSupporterProfiles(target, ledgers);
   const stats = calculateNetworkStats(target, ledgers, profiles);
@@ -116,7 +138,7 @@ test("slashes reduce net support contribution without being treated as base scor
   assert.equal(stats.estimatedTargetBasePoints, 104500);
 });
 
-test("closed reciprocal ring produces high coordination risk", () => {
+test("closed reciprocal voucher ring produces high support coordination risk", () => {
   const handles = Array.from({ length: 12 }, (_, i) => `ring_${i}`);
   const target = targetLedger(handles, true);
   const ledgers = ringLedgers(handles);
@@ -125,9 +147,49 @@ test("closed reciprocal ring produces high coordination risk", () => {
   const metrics = calculateIntegrityMetrics(stats);
 
   assert.equal(stats.reciprocalVoucherCount, 12);
-  assert.ok(stats.internalVouchEdges >= 12);
-  assert.ok(stats.largestComponentShare >= 0.9);
-  assert.ok(metrics.coordinationRisk >= 70);
-  assert.ok(metrics.botSybilSupportRisk >= 65);
-  assert.ok(metrics.integrityScore < 50);
+  assert.ok(stats.internalVoucherVouchEdges >= 12);
+  assert.ok(stats.voucherLargestComponentShare >= 0.9);
+  assert.ok(metrics.supportCoordinationRisk >= 60);
+  assert.ok(metrics.supportIntegrity < 55);
+  assert.equal(deterministicVerdict(metrics, stats), "SUPPORT_COORDINATION_RISK");
+});
+
+test("organic vouches plus mass slashing never produces a blanket likely-organic verdict", () => {
+  const handles = Array.from({ length: 16 }, (_, i) => `creator_${i}`);
+  const target = targetLedger(handles, false);
+  addSlashWave(target, 80, true);
+  const vouchPoints = target.entries.filter((entry) => entry.kind === "vouch").reduce((sum, entry) => sum + Math.abs(entry.points), 0);
+  const slashPoints = target.entries.filter((entry) => entry.kind === "slash").reduce((sum, entry) => sum + Math.abs(entry.points), 0);
+  target.totalPoints = 220000 + vouchPoints - slashPoints;
+
+  const ledgers = independentLedgers(handles);
+  addIndependentSlasherLedgers(ledgers, 30);
+  const profiles = buildSupporterProfiles(target, ledgers);
+  const stats = calculateNetworkStats(target, ledgers, profiles);
+  const metrics = calculateIntegrityMetrics(stats);
+  const verdict = deterministicVerdict(metrics, stats);
+
+  assert.ok(metrics.supportIntegrity >= 65, `support integrity ${metrics.supportIntegrity}`);
+  assert.ok(metrics.attackPressure >= 65, `attack pressure ${metrics.attackPressure}`);
+  assert.ok(metrics.rankDistortionRisk >= 55, `rank distortion ${metrics.rankDistortionRisk}`);
+  assert.notEqual(verdict, "LIKELY_ORGANIC");
+  assert.ok(["HEAVY_SLASH_PRESSURE", "SLASH_ATTACK_RISK"].includes(verdict), verdict);
+});
+
+test("slasher ring is measured independently from voucher ring", () => {
+  const handles = Array.from({ length: 12 }, (_, i) => `creator_${i}`);
+  const target = targetLedger(handles, false);
+  addSlashWave(target, 18, true);
+  const ledgers = independentLedgers(handles);
+  const slasherHandles = Array.from({ length: 18 }, (_, i) => `slasher_${i}`);
+  const slasherRing = ringLedgers(slasherHandles);
+  for (const [key, ledger] of slasherRing) ledgers.set(key, ledger);
+  const profiles = buildSupporterProfiles(target, ledgers);
+  const stats = calculateNetworkStats(target, ledgers, profiles);
+  const metrics = calculateIntegrityMetrics(stats);
+
+  assert.ok(stats.internalSlasherVouchEdges >= 18);
+  assert.ok(stats.slasherLargestComponentShare >= 0.9);
+  assert.ok(metrics.attackCoordinationRisk >= 50);
+  assert.ok(metrics.botSybilNetworkRisk >= 30);
 });
