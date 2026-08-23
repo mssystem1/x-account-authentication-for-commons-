@@ -1,5 +1,5 @@
 import { demoInvestigation } from "./demo.ts";
-import { calculateRiskScores, confidenceLabel, METHODOLOGY_VERSION, normalizeConfidence, recommendationFor } from "./scoring.ts";
+import { calculateRiskScores, confidenceLabel, isNeutralMetricVector, METHODOLOGY_VERSION, normalizeConfidence, recommendationFor } from "./scoring.ts";
 import { readCachedScan, isFresh, writeCachedScan } from "./storage.ts";
 import type { ScanResult } from "./types.ts";
 import { appOrigin, normalizeHandle, unique } from "./utils.ts";
@@ -16,15 +16,30 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
   }
 
   const demo = process.env.VOUCHGUARD_DEMO_MODE === "true";
-  const { investigation, model } = demo
-    ? { investigation: demoInvestigation(handle), model: "demo-grok-4.5" }
+  const { investigation, model, xSearchCalls } = demo
+    ? { investigation: demoInvestigation(handle), model: "demo-grok-4.5", xSearchCalls: 1 }
     : await investigateWithGrok(handle);
 
-  const scores = calculateRiskScores(investigation);
-  const confidence = normalizeConfidence(investigation.confidence);
-  const recommendation = recommendationFor(scores, confidence);
+  const neutralVectorDetected = isNeutralMetricVector(investigation);
+  const coverage = investigation.coverage;
+  const insufficient =
+    !coverage.profileResolved ||
+    coverage.sufficiency === "insufficient" ||
+    coverage.postsObserved < 5 ||
+    xSearchCalls < 1 ||
+    neutralVectorDetected;
+
+  let confidence = normalizeConfidence(investigation.confidence);
+  if (coverage.sufficiency === "limited") confidence = Math.min(confidence, 0.59);
+  if (insufficient) confidence = Math.min(confidence, 0.25);
+
+  const scores = insufficient ? null : calculateRiskScores(investigation);
+  const recommendation = scores ? recommendationFor(scores, confidence) : "UNSCORABLE";
   const createdAt = new Date().toISOString();
   const sourceUrls = unique(investigation.evidence.flatMap((item) => item.sourceUrls));
+  const summary = insufficient
+    ? `VouchGuard could not gather enough direct X evidence to score @${handle} reliably. ${coverage.note}`
+    : investigation.summary;
 
   const result: ScanResult = {
     id: `${handle.toLowerCase()}-${Date.now()}`,
@@ -36,8 +51,13 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
     confidence,
     confidenceLabel: confidenceLabel(confidence),
     recommendation,
-    summary: investigation.summary,
+    summary,
     profile: investigation.profile,
+    coverage,
+    diagnostics: {
+      xSearchCalls,
+      neutralVectorDetected,
+    },
     evidence: investigation.evidence,
     uncertainties: investigation.uncertainties,
     sourceUrls,
@@ -46,9 +66,13 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
     permalink: `${appOrigin()}/u/${handle}`,
   };
 
-  await writeCachedScan(result).catch((error) => {
-    console.error("VouchGuard cache write failed", error);
-  });
+  // Never persist an unscorable result. A temporary X Search retrieval failure
+  // should be retried on the next scan rather than cached for hours.
+  if (scores) {
+    await writeCachedScan(result).catch((error) => {
+      console.error("VouchGuard cache write failed", error);
+    });
+  }
 
   return result;
 }
