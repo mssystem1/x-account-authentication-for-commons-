@@ -8,10 +8,9 @@ async function expectNoHorizontalOverflow(page: import("@playwright/test").Page)
   expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
 }
 
-test("desktop creator audit renders Commons integrity report", async ({ page }) => {
+test("desktop creator audit renders support and slash-attack axes", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/");
-
   await expect(page.getByRole("heading", { name: /Audit the/i })).toBeVisible();
   await expectNoHorizontalOverflow(page);
 
@@ -19,46 +18,48 @@ test("desktop creator audit renders Commons integrity report", async ({ page }) 
   await page.getByRole("button", { name: "Audit creator" }).click();
 
   await expect(page.getByRole("heading", { name: "@alice_builder" })).toBeVisible();
-  await expect(page.getByText("COMMONS INTEGRITY", { exact: true })).toBeVisible();
-  await expect(page.getByText("Observed Commons graph signals")).toBeVisible();
-  await expect(page.getByText("Who moved this creator’s Commons score?")).toBeVisible();
-  await expect(page.getByText("Incoming vouches and slashes")).toBeVisible();
-  await expect(page.getByText("Est. score from net support", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Share integrity audit on X/i })).toBeVisible();
+  await expect(page.getByText("RANK VERDICT", { exact: true })).toBeVisible();
+  await expect(page.getByText("Support integrity", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Slash attack risk", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("How was the account vouched?")).toBeVisible();
+  await expect(page.getByText("Was the rank hit by mass or coordinated slashing?")).toBeVisible();
+  await expect(page.getByText("Top vouchers")).toBeVisible();
+  await expect(page.getByText("Top slashers")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Share rank audit on X/i })).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
 
-test("mobile risk audit stays within viewport", async ({ page }) => {
+test("mobile slash-attack audit stays within viewport", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await expectNoHorizontalOverflow(page);
 
   const input = page.getByLabel("COMMONS CREATOR");
   const audit = page.getByRole("button", { name: "Audit creator" });
-  await input.fill("bot_swarm_01");
+  await input.fill("attacked_victim");
 
   const buttonBox = await audit.boundingBox();
   expect(buttonBox).not.toBeNull();
   expect(buttonBox!.width).toBeGreaterThan(300);
 
   await audit.click();
-  await expect(page.getByRole("heading", { name: "@bot_swarm_01" })).toBeVisible();
-  await expect(page.getByText(/coordination risk/i).first()).toBeVisible();
-  await expect(page.getByText("SUPPORTERS", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "@attacked_victim" })).toBeVisible();
+  await expect(page.getByText(/Rank heavily hit by slashing|Coordinated slash-attack risk/i)).toBeVisible();
+  await expect(page.getByText("SLASH ATTACK ANALYSIS", { exact: true })).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
 
-test("supporter table is horizontally contained on phone", async ({ page }) => {
+test("voucher and slasher tables are horizontally contained on phone", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 800 });
   await page.goto("/");
-  await page.getByLabel("COMMONS CREATOR").fill("organic_creator");
+  await page.getByLabel("COMMONS CREATOR").fill("attacked_victim");
   await page.getByRole("button", { name: "Audit creator" }).click();
-  await expect(page.locator(".supporter-table-wrap")).toBeVisible();
-  const contained = await page.locator(".supporter-table-wrap").evaluate((element) => {
+  await expect(page.locator(".supporter-table-wrap").first()).toBeVisible();
+  const wrappers = await page.locator(".supporter-table-wrap").evaluateAll((elements) => elements.map((element) => {
     const rect = element.getBoundingClientRect();
     return rect.left >= -2 && rect.right <= window.innerWidth + 2 && element.scrollWidth >= element.clientWidth;
-  });
-  expect(contained).toBeTruthy();
+  }));
+  expect(wrappers.every(Boolean)).toBeTruthy();
   await expectNoHorizontalOverflow(page);
 });
 
@@ -66,6 +67,6 @@ test("methodology page remains readable on phone viewport", async ({ page }) => 
   await page.setViewportSize({ width: 360, height: 800 });
   await page.goto("/methodology");
   await expect(page.getByRole("heading", { name: "Audit how the rank was built." })).toBeVisible();
-  await expect(page.getByText(/VG-COMMONS-2026\.08\.2/i)).toBeVisible();
+  await expect(page.getByText(/VG-COMMONS-2026\.08\.3/i)).toBeVisible();
   await expectNoHorizontalOverflow(page);
 });
