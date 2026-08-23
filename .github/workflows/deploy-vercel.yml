@@ -81,7 +81,7 @@ jobs:
           vercel env add SCAN_CACHE_TTL_SECONDS production --force --token "$VERCEL_TOKEN" < /tmp/cache-ttl
           vercel env add SCAN_RATE_LIMIT_PER_MINUTE production --force --token "$VERCEL_TOKEN" < /tmp/rate-limit
           vercel env add VOUCHGUARD_DEMO_MODE production --force --token "$VERCEL_TOKEN" < /tmp/demo-mode
-          vercel env add NEXT_PUBLIC_APP_URL production --force --token "$VERCEL_TOKEN" < /tmp/app-url
+          vercel env add NEXT_PUBLIC_APP_URL production --no-sensitive --force --token "$VERCEL_TOKEN" < /tmp/app-url
           rm -f /tmp/xai-key /tmp/xai-model /tmp/cache-ttl /tmp/rate-limit /tmp/demo-mode /tmp/app-url
 
       - name: Create or verify Vercel Blob cache
