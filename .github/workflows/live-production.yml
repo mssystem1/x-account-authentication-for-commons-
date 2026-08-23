@@ -30,7 +30,7 @@ jobs:
           console.log('Production health:', h);
           if (!h.ok || h.mode !== 'live' || !h.xaiConfigured) throw new Error('Production xAI runtime is not healthy');
           if (!h.xApiConfigured || h.retrieval !== 'official-x-api') throw new Error('Production X_BEARER_TOKEN is not configured');
-          if (h.methodologyVersion !== 'vg-2026.08.6') throw new Error(`Expected vg-2026.08.6, got ${h.methodologyVersion}`);
+          if (h.methodologyVersion !== 'vg-2026.08.7') throw new Error(`Expected vg-2026.08.7, got ${h.methodologyVersion}`);
           NODE
 
           HTTP="$(curl --location --silent --show-error --output /tmp/scan.json --write-out '%{http_code}' \
@@ -61,6 +61,10 @@ jobs:
           if (r.diagnostics?.retrievalMode !== 'x-api') throw new Error('Official X API was not used');
           if (!r.coverage?.profileResolved) throw new Error('X profile was not resolved');
           if (r.coverage.postsObserved < 5) throw new Error('Insufficient deterministic post coverage');
+          if (r.diagnostics?.analysisSampleSize !== 5) throw new Error(`Expected five-post quick scan, got ${r.diagnostics?.analysisSampleSize}`);
+          if (typeof r.diagnostics?.estimatedXReadCostUsd !== 'number' || r.diagnostics.estimatedXReadCostUsd > 0.035001) {
+            throw new Error(`X-side read estimate exceeded $0.035: ${r.diagnostics?.estimatedXReadCostUsd}`);
+          }
           if (!r.scores) throw new Error('Production scan remained unscorable');
           const values=[r.scores.authenticity,r.scores.farmerRisk,r.scores.botRisk,r.scores.sybilRisk,r.scores.vouchConfidence];
           if (values.every(v=>v===50)) throw new Error('Regression: all-50 placeholder vector returned');
