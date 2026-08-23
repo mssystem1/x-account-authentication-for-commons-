@@ -1,7 +1,15 @@
 import type { ConfidenceLabel, GrokInvestigation, Recommendation, RiskScores } from "./types.ts";
 import { clamp, roundScore } from "./utils.ts";
 
-export const METHODOLOGY_VERSION = "vg-2026.08.1";
+export const METHODOLOGY_VERSION = "vg-2026.08.2";
+
+export function isNeutralMetricVector(investigation: GrokInvestigation): boolean {
+  const values = Object.values(investigation.metrics);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  return max - min <= 2 && mean >= 48 && mean <= 52;
+}
 
 export function calculateRiskScores(investigation: GrokInvestigation): RiskScores {
   const m = investigation.metrics;
