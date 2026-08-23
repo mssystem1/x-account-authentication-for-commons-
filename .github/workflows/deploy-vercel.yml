@@ -16,9 +16,8 @@ permissions:
 
 jobs:
   deploy:
-    if: ${{ secrets.VERCEL_TOKEN != '' && secrets.XAI_API_KEY != '' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
@@ -30,14 +29,40 @@ jobs:
         with:
           node-version: 22
 
+      - name: Verify deployment secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VERCEL_TOKEN" || { echo "VERCEL_TOKEN is missing"; exit 1; }
+          test -n "$XAI_API_KEY" || { echo "XAI_API_KEY is missing"; exit 1; }
+          echo "Required deployment credentials are configured."
+
       - name: Install application dependencies
         run: npm install --no-audit --no-fund
+
+      - name: Validate application before deployment
+        env:
+          VOUCHGUARD_DEMO_MODE: "true"
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          npm run typecheck
+          npm test
+          npm run build
 
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
       - name: Create or link Vercel project
-        run: vercel link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN"
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! vercel project inspect "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/dev/null 2>&1; then
+            echo "Creating Vercel project $VERCEL_PROJECT_NAME"
+            vercel api /v9/projects -X POST -F "name=$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN" >/tmp/vercel-project.json
+          else
+            echo "Vercel project already exists."
+          fi
+          vercel link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN"
 
       - name: Configure production environment
         shell: bash
@@ -56,9 +81,15 @@ jobs:
           vercel env add VOUCHGUARD_DEMO_MODE production --force --token "$VERCEL_TOKEN" < /tmp/demo-mode
           rm -f /tmp/xai-key /tmp/xai-model /tmp/cache-ttl /tmp/rate-limit /tmp/demo-mode
 
-      - name: Create Vercel Blob cache
+      - name: Create or verify Vercel Blob cache
+        shell: bash
         run: |
-          vercel blob create-store vouchguard-cache --access public --token "$VERCEL_TOKEN" || echo "Blob store may already exist; continuing."
+          set -euo pipefail
+          if vercel blob create-store vouchguard-cache --access public --token "$VERCEL_TOKEN"; then
+            echo "Created and connected vouchguard-cache Blob store."
+          else
+            echo "Blob store creation returned a non-zero status. It may already exist; continuing to deployment and validating storage via /api/health."
+          fi
 
       - name: Connect GitHub repository
         run: vercel git connect --yes --token "$VERCEL_TOKEN" || echo "Git integration could not be connected automatically; CLI deployment will still proceed."
@@ -72,17 +103,22 @@ jobs:
           echo "url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
           echo "Production: $DEPLOYMENT_URL"
 
-      - name: Verify production health
+      - name: Verify production health and storage
         shell: bash
         run: |
           set -euo pipefail
           URL='${{ steps.deploy.outputs.url }}'
-          for attempt in {1..12}; do
+          for attempt in {1..18}; do
             if curl --fail --silent --show-error "$URL/api/health" | tee /tmp/health.json; then
-              node -e 'const h=require("/tmp/health.json"); if(!h.ok || h.mode!=="live" || !h.xaiConfigured) process.exit(1); console.log("VouchGuard production health check passed", h)'
+              node -e 'const h=require("/tmp/health.json"); if(!h.ok || h.mode!=="live" || !h.xaiConfigured || h.storage!=="vercel-blob") { console.error("Invalid production health", h); process.exit(1); } console.log("VouchGuard production health and Blob check passed", h)'
               exit 0
             fi
             sleep 5
           done
           echo "Production health check did not pass."
           exit 1
+
+      - name: Production URL summary
+        run: |
+          echo "### VouchGuard production" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
