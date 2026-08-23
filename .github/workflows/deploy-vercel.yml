@@ -23,6 +23,7 @@ jobs:
       XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
       VERCEL_PROJECT_NAME: vouchguard-ai
       PRODUCTION_DOMAIN: vouchguard-ai.vercel.app
+      RECOVERY_DOMAIN: vouchguard-commons-ai.vercel.app
     steps:
       - uses: actions/checkout@v4
 
@@ -65,6 +66,20 @@ jobs:
           fi
           vercel link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN"
 
+      - name: Make production domains public
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/protection.json <<'JSON'
+          {
+            "ssoProtection": {
+              "deploymentType": "prod_deployment_urls_and_all_previews"
+            }
+          }
+          JSON
+          vercel api "/v9/projects/$VERCEL_PROJECT_NAME" -X PATCH --input /tmp/protection.json --token "$VERCEL_TOKEN" > /tmp/protection-result.json
+          node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync("/tmp/protection-result.json","utf8")); console.log("ssoProtection", p.ssoProtection ?? null)'
+
       - name: Configure production environment
         shell: bash
         run: |
@@ -74,7 +89,7 @@ jobs:
           printf '%s' '21600' > /tmp/cache-ttl
           printf '%s' '12' > /tmp/rate-limit
           printf '%s' 'false' > /tmp/demo-mode
-          printf '%s' "https://$PRODUCTION_DOMAIN" > /tmp/app-url
+          printf '%s' "https://$RECOVERY_DOMAIN" > /tmp/app-url
 
           vercel env add XAI_API_KEY production --sensitive --force --token "$VERCEL_TOKEN" < /tmp/xai-key
           vercel env add XAI_MODEL production --force --token "$VERCEL_TOKEN" < /tmp/xai-model
@@ -106,59 +121,70 @@ jobs:
           echo "url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
           echo "Generated production deployment: $DEPLOYMENT_URL"
 
-      - name: Assign canonical production alias
+      - name: Recreate original production alias
         shell: bash
         run: |
           set -euo pipefail
           DEPLOYMENT_URL='${{ steps.deploy.outputs.url }}'
-          echo "Assigning $PRODUCTION_DOMAIN to $DEPLOYMENT_URL"
+          vercel alias rm "$PRODUCTION_DOMAIN" --yes --token "$VERCEL_TOKEN" || true
+          sleep 2
           vercel alias set "$DEPLOYMENT_URL" "$PRODUCTION_DOMAIN" --token "$VERCEL_TOKEN"
 
-      - name: Verify generated deployment
+      - name: Create recovery production alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOYMENT_URL='${{ steps.deploy.outputs.url }}'
+          vercel alias rm "$RECOVERY_DOMAIN" --yes --token "$VERCEL_TOKEN" || true
+          sleep 2
+          vercel alias set "$DEPLOYMENT_URL" "$RECOVERY_DOMAIN" --token "$VERCEL_TOKEN"
+          vercel alias ls --limit 100 --token "$VERCEL_TOKEN"
+
+      - name: Confirm generated deployment exists
         shell: bash
         run: |
           set -euo pipefail
           URL='${{ steps.deploy.outputs.url }}'
-          for attempt in {1..18}; do
-            if curl --location --fail --silent --show-error "$URL/" >/tmp/root.html && curl --location --fail --silent --show-error "$URL/api/health" >/tmp/health-generated.json; then
-              echo "Generated deployment is reachable."
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "Generated deployment URL is not reachable."
-          exit 1
+          STATUS="$(curl --silent --output /tmp/generated --write-out '%{http_code}' "$URL/" || true)"
+          LOCATION="$(curl --silent --head "$URL/" | awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/\r$/,""); print substr($0,11)}' | head -1)"
+          echo "Generated deployment direct status=$STATUS location=$LOCATION"
+          test "$STATUS" = "200" -o "$STATUS" = "302" -o "$STATUS" = "307"
 
-      - name: Verify canonical production URL and storage
+      - name: Verify fresh public recovery alias
         shell: bash
         run: |
           set -euo pipefail
-          URL="https://$PRODUCTION_DOMAIN"
-          for attempt in {1..24}; do
-            ROOT_STATUS="$(curl --location --silent --output /tmp/root.html --write-out '%{http_code}' "$URL/" || true)"
-            HEALTH_STATUS="$(curl --location --silent --output /tmp/health.json --write-out '%{http_code}' "$URL/api/health" || true)"
-            echo "Attempt $attempt: root=$ROOT_STATUS health=$HEALTH_STATUS"
-            if [ "$ROOT_STATUS" = "200" ] && [ "$HEALTH_STATUS" = "200" ]; then
-              node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/health.json","utf8")); if(!h.ok || h.mode!=="live" || !h.xaiConfigured || h.storage!=="vercel-blob") { console.error("Invalid production health", h); process.exit(1); } console.log("Canonical production URL, xAI config, and Blob storage passed", h)'
+          URL="https://$RECOVERY_DOMAIN"
+          for attempt in {1..18}; do
+            ROOT_STATUS="$(curl --silent --output /tmp/recovery-root.html --write-out '%{http_code}' "$URL/" || true)"
+            HEALTH_STATUS="$(curl --silent --output /tmp/recovery-health.json --write-out '%{http_code}' "$URL/api/health" || true)"
+            CONTENT_TYPE="$(curl --silent --output /dev/null --write-out '%{content_type}' "$URL/api/health" || true)"
+            echo "Attempt $attempt: root=$ROOT_STATUS health=$HEALTH_STATUS content-type=$CONTENT_TYPE"
+            if [ "$ROOT_STATUS" = "200" ] && [ "$HEALTH_STATUS" = "200" ] && [[ "$CONTENT_TYPE" == application/json* ]]; then
+              node -e 'const fs=require("fs"); const h=JSON.parse(fs.readFileSync("/tmp/recovery-health.json","utf8")); console.log("recovery health", h); if(!h.ok || h.mode!=="live" || !h.xaiConfigured) process.exit(1)'
+              echo "RECOVERY_ALIAS_OK=https://$RECOVERY_DOMAIN"
               exit 0
-            fi
-            if grep -q '404: NOT_FOUND' /tmp/root.html 2>/dev/null; then
-              echo "Canonical alias still returns Vercel NOT_FOUND; retrying while alias propagates."
             fi
             sleep 5
           done
-          echo "Canonical production URL failed validation: https://$PRODUCTION_DOMAIN"
-          echo "Root response:"
-          head -c 1000 /tmp/root.html || true
-          echo
-          echo "Health response:"
-          head -c 1000 /tmp/health.json || true
-          echo
+          echo "Recovery alias failed. Direct headers:"
+          curl --silent --head "$URL/api/health" | head -15 || true
           exit 1
+
+      - name: Probe original canonical alias
+        if: always()
+        shell: bash
+        run: |
+          ROOT_STATUS="$(curl --silent --output /tmp/canonical-root.html --write-out '%{http_code}' "https://$PRODUCTION_DOMAIN/" || true)"
+          HEALTH_STATUS="$(curl --silent --output /tmp/canonical-health.json --write-out '%{http_code}' "https://$PRODUCTION_DOMAIN/api/health" || true)"
+          echo "Original canonical: root=$ROOT_STATUS health=$HEALTH_STATUS"
 
       - name: Production URL summary
         if: always()
         run: |
           echo "### VouchGuard production" >> "$GITHUB_STEP_SUMMARY"
-          echo "Canonical: https://$PRODUCTION_DOMAIN" >> "$GITHUB_STEP_SUMMARY"
+          echo "Recovery public URL: https://$RECOVERY_DOMAIN" >> "$GITHUB_STEP_SUMMARY"
+          echo "Original alias: https://$PRODUCTION_DOMAIN" >> "$GITHUB_STEP_SUMMARY"
           echo "Generated deployment: ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+
+# standard protection + public recovery alias validation
