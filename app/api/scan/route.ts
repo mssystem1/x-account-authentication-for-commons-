@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { rateLimit } from "@/lib/rate-limit";
-import { scanAccount } from "@/lib/scan";
+import { auditCommonsCreator } from "@/lib/audit";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   const rate = rateLimit(requestKey(request));
   if (!rate.allowed) {
     return NextResponse.json(
-      { error: "Too many scans. Try again shortly." },
+      { error: "Too many audits. Try again shortly." },
       { status: 429, headers: { "Retry-After": String(rate.retryAfter) } },
     );
   }
@@ -24,18 +24,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "A valid X handle is required." }, { status: 400 });
     }
 
-    const result = await scanAccount(body.handle, body.refresh === true);
-    return NextResponse.json(result, {
-      headers: { "Cache-Control": "no-store" },
-    });
+    const result = await auditCommonsCreator(body.handle, body.refresh === true);
+    return NextResponse.json(result, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Account scan failed.";
-    const isConfig = message.includes("XAI_API_KEY");
+    const message = error instanceof Error ? error.message : "Commons integrity audit failed.";
     const isValidation = message.includes("valid X handle");
-    console.error("VouchGuard scan error", error);
+    const isNotFound = message.includes("not found in the Commons");
+    const isRate = message.includes("rate limit");
+    console.error("VouchGuard Commons audit error", error);
     return NextResponse.json(
       { error: message },
-      { status: isConfig ? 503 : isValidation ? 400 : 502 },
+      { status: isValidation ? 400 : isNotFound ? 404 : isRate ? 429 : 502 },
     );
   }
 }
