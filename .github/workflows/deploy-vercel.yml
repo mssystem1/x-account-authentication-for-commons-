@@ -1,0 +1,80 @@
+name: Deploy to Vercel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: ${{ secrets.VERCEL_TOKEN != '' && secrets.XAI_API_KEY != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+      VERCEL_PROJECT_NAME: vouchguard-ai
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install application dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install Vercel CLI
+        run: npm install --global vercel@latest
+
+      - name: Create or link Vercel project
+        run: vercel link --yes --project "$VERCEL_PROJECT_NAME" --token "$VERCEL_TOKEN"
+
+      - name: Configure production environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$XAI_API_KEY" > /tmp/xai-key
+          printf '%s' 'grok-4.5-latest' > /tmp/xai-model
+          printf '%s' '21600' > /tmp/cache-ttl
+          printf '%s' '12' > /tmp/rate-limit
+          printf '%s' 'false' > /tmp/demo-mode
+
+          vercel env add XAI_API_KEY production --sensitive --force --token "$VERCEL_TOKEN" < /tmp/xai-key
+          vercel env add XAI_MODEL production --force --token "$VERCEL_TOKEN" < /tmp/xai-model
+          vercel env add SCAN_CACHE_TTL_SECONDS production --force --token "$VERCEL_TOKEN" < /tmp/cache-ttl
+          vercel env add SCAN_RATE_LIMIT_PER_MINUTE production --force --token "$VERCEL_TOKEN" < /tmp/rate-limit
+          vercel env add VOUCHGUARD_DEMO_MODE production --force --token "$VERCEL_TOKEN" < /tmp/demo-mode
+          rm -f /tmp/xai-key /tmp/xai-model /tmp/cache-ttl /tmp/rate-limit /tmp/demo-mode
+
+      - name: Create Vercel Blob cache
+        run: |
+          vercel blob create-store vouchguard-cache --access public --token "$VERCEL_TOKEN" || echo "Blob store may already exist; continuing."
+
+      - name: Connect GitHub repository
+        run: vercel git connect --yes --token "$VERCEL_TOKEN" || echo "Git integration could not be connected automatically; CLI deployment will still proceed."
+
+      - name: Deploy production
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          DEPLOYMENT_URL="$(vercel deploy --prod --yes --token "$VERCEL_TOKEN")"
+          echo "url=$DEPLOYMENT_URL" >> "$GITHUB_OUTPUT"
+          echo "Production: $DEPLOYMENT_URL"
+
+      - name: Verify production health
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='${{ steps.deploy.outputs.url }}'
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error "$URL/api/health" | tee /tmp/health.json; then
+              node -e 'const h=require("/tmp/health.json"); if(!h.ok || h.mode!=="live" || !h.xaiConfigured) process.exit(1); console.log("VouchGuard production health check passed", h)'
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Production health check did not pass."
+          exit 1
