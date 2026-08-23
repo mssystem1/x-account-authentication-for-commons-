@@ -1,6 +1,14 @@
 export type CommonsActionKind = "vouch" | "slash";
-export type IntegrityVerdict = "LIKELY_ORGANIC" | "MIXED" | "HIGH_COORDINATION_RISK" | "INSUFFICIENT_DATA";
+export type IntegrityVerdict =
+  | "LIKELY_ORGANIC"
+  | "SUPPORT_REVIEW"
+  | "SUPPORT_COORDINATION_RISK"
+  | "HEAVY_SLASH_PRESSURE"
+  | "SLASH_ATTACK_RISK"
+  | "CONTESTED_MANIPULATION"
+  | "INSUFFICIENT_DATA";
 export type EvidenceImpact = "positive" | "warning" | "risk";
+export type EvidenceDomain = "support" | "attack" | "rank" | "coverage";
 
 export interface CommonsLedgerEntry {
   kind: CommonsActionKind;
@@ -31,20 +39,28 @@ export interface SupporterProfile {
   incomingSlashes: number;
   uniqueIncomingActors: number;
   reciprocatedByTarget: boolean;
+  retaliatedByTarget: boolean;
   internalVouchLinks: number;
   internalSlashLinks: number;
   graphLoaded: boolean;
 }
 
 export interface IntegrityMetrics {
-  integrityScore: number;
-  organicSupport: number;
-  coordinationRisk: number;
-  reciprocityRisk: number;
-  concentrationRisk: number;
-  timingRisk: number;
-  lowQualitySupportRisk: number;
-  botSybilSupportRisk: number;
+  supportIntegrity: number;
+  supportCoordinationRisk: number;
+  supportReciprocityRisk: number;
+  supportConcentrationRisk: number;
+  supportTimingRisk: number;
+  supportThinAccountRisk: number;
+  slashAttackRisk: number;
+  attackPressure: number;
+  attackCoordinationRisk: number;
+  attackTimingRisk: number;
+  attackConcentrationRisk: number;
+  attackThinAccountRisk: number;
+  botSybilNetworkRisk: number;
+  rankDistortionRisk: number;
+  rankReliability: number;
 }
 
 export interface NetworkStats {
@@ -57,29 +73,62 @@ export interface NetworkStats {
   netLedgerImpact: number;
   estimatedTargetBasePoints: number;
   estimatedNetSupportShare: number;
-  analyzedSupporters: number;
+  negativeActionShare: number;
+  slashToBaseRatio: number;
+  voucherSlasherOverlapCount: number;
+
+  analyzedVouchers: number;
+  analyzedSlashers: number;
   totalSupporters: number;
-  graphCoverage: number;
+  vouchGraphCoverage: number;
+  slashGraphCoverage: number;
+
   reciprocalVoucherCount: number;
   reciprocalVoucherRatio: number;
-  internalVouchEdges: number;
-  internalSlashEdges: number;
-  largestComponentSize: number;
-  largestComponentShare: number;
-  internalEdgeDensity: number;
-  top1PointShare: number;
-  top5PointShare: number;
-  pointHhi: number;
+  targetSlashRetaliationCount: number;
+  targetSlashRetaliationRatio: number;
+
+  internalVoucherVouchEdges: number;
+  internalVoucherSlashEdges: number;
+  internalSlasherVouchEdges: number;
+  internalSlasherSlashEdges: number;
+  voucherLargestComponentSize: number;
+  voucherLargestComponentShare: number;
+  slasherLargestComponentSize: number;
+  slasherLargestComponentShare: number;
+  voucherEdgeDensity: number;
+  slasherEdgeDensity: number;
+  voucherEdgesPerAnalyzedActor: number;
+  slasherEdgesPerAnalyzedActor: number;
+
+  top1VouchPointShare: number;
+  top5VouchPointShare: number;
+  vouchPointHhi: number;
+  top1SlashPointShare: number;
+  top5SlashPointShare: number;
+  slashPointHhi: number;
+
+  maxVouches5m: number;
   maxVouches15m: number;
   maxVouches60m: number;
-  rapid15mShare: number;
-  rapid60mShare: number;
-  medianEstimatedBasePoints: number;
-  lowPowerVoucherCount: number;
-  lowPowerVoucherShare: number;
+  rapidVouch15mShare: number;
+  rapidVouch60mShare: number;
+  maxSlashes5m: number;
+  maxSlashes15m: number;
+  maxSlashes60m: number;
+  rapidSlash15mShare: number;
+  rapidSlash60mShare: number;
+
+  medianVoucherEstimatedBasePoints: number;
+  medianSlasherEstimatedBasePoints: number;
+  thinVoucherCount: number;
+  thinVoucherShare: number;
+  thinSlasherCount: number;
+  thinSlasherShare: number;
 }
 
 export interface IntegrityEvidence {
+  domain: EvidenceDomain;
   label: string;
   observation: string;
   impact: EvidenceImpact;
@@ -90,9 +139,12 @@ export interface GrokIntegrityReport {
   verdict: IntegrityVerdict;
   headline: string;
   explanation: string;
+  supportAssessment: string;
+  attackAssessment: string;
   confidence: number;
   organicSignals: string[];
-  riskSignals: string[];
+  supportRiskSignals: string[];
+  attackRiskSignals: string[];
   caveats: string[];
 }
 
