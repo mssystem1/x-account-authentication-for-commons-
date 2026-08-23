@@ -1,4 +1,4 @@
-import type { ScanResult } from "../lib/types.ts";
+import type { IntegrityAuditResult } from "../lib/integrity-types.ts";
 
 export interface VouchGuardClientOptions {
   baseUrl?: string;
@@ -11,18 +11,23 @@ export class VouchGuardClient {
     this.baseUrl = (options.baseUrl || "http://localhost:3000").replace(/\/$/, "");
   }
 
-  async scanAccount(handle: string, options: { refresh?: boolean } = {}): Promise<ScanResult> {
+  async auditCreator(handle: string, options: { refresh?: boolean } = {}): Promise<IntegrityAuditResult> {
     const response = await fetch(`${this.baseUrl}/api/scan`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ handle, refresh: Boolean(options.refresh) }),
     });
 
-    const payload = await response.json() as ScanResult | { error?: string };
+    const payload = await response.json() as IntegrityAuditResult | { error?: string };
     if (!response.ok) {
       throw new Error("error" in payload && payload.error ? payload.error : `VouchGuard request failed (${response.status}).`);
     }
-    return payload as ScanResult;
+    return payload as IntegrityAuditResult;
+  }
+
+  /** Backwards-compatible alias. */
+  async scanAccount(handle: string, options: { refresh?: boolean } = {}): Promise<IntegrityAuditResult> {
+    return this.auditCreator(handle, options);
   }
 
   async health(): Promise<Record<string, unknown>> {
@@ -32,4 +37,4 @@ export class VouchGuardClient {
   }
 }
 
-export type { ScanResult } from "../lib/types.ts";
+export type { IntegrityAuditResult } from "../lib/integrity-types.ts";
