@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       handle:
-        description: X handle to scan
+        description: Commons creator X handle to audit
         required: true
         default: natalia77351991
 
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Verify health and real account scan
+      - name: Verify health and real Commons audit
         shell: bash
         env:
           HANDLE: ${{ inputs.handle }}
@@ -28,44 +28,39 @@ jobs:
           const fs=require('fs');
           const h=JSON.parse(fs.readFileSync('/tmp/health.json','utf8'));
           console.log('Production health:', h);
-          if (!h.ok || h.mode !== 'live' || !h.xaiConfigured) throw new Error('Production xAI runtime is not healthy');
-          if (!h.xApiConfigured || h.retrieval !== 'official-x-api') throw new Error('Production X_BEARER_TOKEN is not configured');
-          if (h.methodologyVersion !== 'vg-2026.08.7') throw new Error(`Expected vg-2026.08.7, got ${h.methodologyVersion}`);
+          if (!h.ok || h.mode !== 'live') throw new Error('Production runtime is not healthy');
+          if (h.primaryData !== 'commons-ledger' || h.xApiRequired !== false) throw new Error('Commons-ledger architecture is not live');
+          if (h.methodologyVersion !== 'vg-commons-2026.08.1') throw new Error(`Expected vg-commons-2026.08.1, got ${h.methodologyVersion}`);
           NODE
 
-          HTTP="$(curl --location --silent --show-error --output /tmp/scan.json --write-out '%{http_code}' \
+          HTTP="$(curl --location --silent --show-error --output /tmp/audit.json --write-out '%{http_code}' \
             -X POST "$BASE/api/scan" \
             -H 'Content-Type: application/json' \
             --data "{\"handle\":\"$HANDLE\",\"refresh\":true}")"
-          echo "Scan HTTP=$HTTP"
+          echo "Audit HTTP=$HTTP"
           if [ "$HTTP" != "200" ]; then
-            cat /tmp/scan.json
+            cat /tmp/audit.json
             exit 1
           fi
 
           node - <<'NODE'
           const fs=require('fs');
-          const r=JSON.parse(fs.readFileSync('/tmp/scan.json','utf8'));
+          const r=JSON.parse(fs.readFileSync('/tmp/audit.json','utf8'));
           console.log(JSON.stringify({
             handle:r.handle,
-            recommendation:r.recommendation,
-            scores:r.scores,
-            confidence:r.confidence,
-            coverage:r.coverage,
-            diagnostics:r.diagnostics,
-            sources:r.sourceUrls?.length,
-            evidence:r.evidence?.length,
-            summary:r.summary
+            commons:r.commons,
+            metrics:r.metrics,
+            stats:r.stats,
+            verdict:r.report?.verdict,
+            reportConfidence:r.report?.confidence,
+            supporters:r.supporters?.length,
+            sourceEntries:r.sourceEntries?.length
           }, null, 2));
-          if (r.mode !== 'live') throw new Error('Not a live scan');
-          if (r.diagnostics?.retrievalMode !== 'x-api') throw new Error('Official X API was not used');
-          if (!r.coverage?.profileResolved) throw new Error('X profile was not resolved');
-          if (r.coverage.postsObserved < 5) throw new Error('Insufficient deterministic post coverage');
-          if (r.diagnostics?.analysisSampleSize !== 5) throw new Error(`Expected five-post quick scan, got ${r.diagnostics?.analysisSampleSize}`);
-          if (typeof r.diagnostics?.estimatedXReadCostUsd !== 'number' || r.diagnostics.estimatedXReadCostUsd > 0.035001) {
-            throw new Error(`X-side read estimate exceeded $0.035: ${r.diagnostics?.estimatedXReadCostUsd}`);
-          }
-          if (!r.scores) throw new Error('Production scan remained unscorable');
-          const values=[r.scores.authenticity,r.scores.farmerRisk,r.scores.botRisk,r.scores.sybilRisk,r.scores.vouchConfidence];
-          if (values.every(v=>v===50)) throw new Error('Regression: all-50 placeholder vector returned');
+          if (r.mode !== 'live') throw new Error('Not a live audit');
+          if (typeof r.metrics?.integrityScore !== 'number') throw new Error('Missing Commons Integrity score');
+          if (!r.stats || typeof r.stats.uniqueVouchers !== 'number') throw new Error('Missing Commons network stats');
+          if (!Array.isArray(r.supporters)) throw new Error('Missing supporter graph rows');
+          if (!Array.isArray(r.sourceEntries)) throw new Error('Missing target Commons ledger events');
+          if (!r.report?.verdict) throw new Error('Missing integrity verdict');
+          if (r.methodologyVersion !== 'vg-commons-2026.08.1') throw new Error(`Unexpected methodology ${r.methodologyVersion}`);
           NODE
