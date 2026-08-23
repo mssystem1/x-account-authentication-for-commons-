@@ -1,8 +1,10 @@
 import { head, put } from "@vercel/blob";
 import type { ScanResult } from "./types.ts";
+import type { IntegrityAuditResult } from "./integrity-types.ts";
 
 const CACHE_PREFIX = "vouchguard/scans/v3";
 const X_IDENTITY_PREFIX = "vouchguard/x-identities/v1";
+const INTEGRITY_CACHE_PREFIX = "vouchguard/integrity/v1";
 const X_IDENTITY_TTL_MS = 24 * 60 * 60 * 1000;
 
 export interface CachedXIdentity {
@@ -26,6 +28,10 @@ function scanPathname(handle: string): string {
 
 function identityPathname(handle: string): string {
   return `${X_IDENTITY_PREFIX}/${handle.toLowerCase()}.json`;
+}
+
+function integrityPathname(handle: string): string {
+  return `${INTEGRITY_CACHE_PREFIX}/${handle.toLowerCase()}.json`;
 }
 
 export function blobConfigured(): boolean {
@@ -76,6 +82,19 @@ export async function writeCachedXIdentity(handle: string, identity: CachedXIden
 }
 
 export function isFresh(result: ScanResult): boolean {
+  const ttlSeconds = Math.max(60, Number(process.env.SCAN_CACHE_TTL_SECONDS || 21600));
+  return Date.now() - new Date(result.createdAt).getTime() < ttlSeconds * 1000;
+}
+
+export async function readIntegrityAudit(handle: string): Promise<IntegrityAuditResult | null> {
+  return readJsonBlob<IntegrityAuditResult>(integrityPathname(handle));
+}
+
+export async function writeIntegrityAudit(result: IntegrityAuditResult): Promise<void> {
+  await writeJsonBlob(integrityPathname(result.handle), result);
+}
+
+export function isFreshIntegrityAudit(result: IntegrityAuditResult): boolean {
   const ttlSeconds = Math.max(60, Number(process.env.SCAN_CACHE_TTL_SECONDS || 21600));
   return Date.now() - new Date(result.createdAt).getTime() < ttlSeconds * 1000;
 }
