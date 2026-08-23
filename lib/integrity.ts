@@ -154,8 +154,15 @@ export function calculateNetworkStats(
     vouchByActor.set(key, (vouchByActor.get(key) ?? 0) + Math.abs(entry.points));
   }
   const pointValues = [...vouchByActor.values()].sort((a, b) => b - a);
-  const totalVouchPoints = pointValues.reduce((sum, value) => sum + value, 0);
-  const shares = pointValues.map((value) => ratio(value, totalVouchPoints));
+  const vouchPoints = Math.round(pointValues.reduce((sum, value) => sum + value, 0));
+  const slashPoints = Math.round(slashEntries.reduce((sum, entry) => sum + Math.abs(entry.points), 0));
+  const netLedgerImpact = vouchPoints - slashPoints;
+  // Commons' target total is treated as current score. Subtracting observed net ledger impact
+  // gives an estimated pre-ledger/base contribution. Keep this explicitly labelled as an estimate.
+  const estimatedTargetBasePoints = Math.max(0, Math.round(target.totalPoints - netLedgerImpact));
+  const estimatedNetSupportShare = clamp(ratio(Math.max(0, netLedgerImpact), Math.max(1, target.totalPoints)), 0, 1);
+
+  const shares = pointValues.map((value) => ratio(value, vouchPoints));
   const timestamps = vouchEntries
     .map((entry) => entry.createdAt ? Date.parse(entry.createdAt) : NaN)
     .filter((value) => Number.isFinite(value));
@@ -178,8 +185,11 @@ export function calculateNetworkStats(
     incomingSlashes: slashEntries.length,
     uniqueVouchers: voucherHandles.length,
     uniqueSlashers: slasherHandles.length,
-    vouchPoints: Math.round(vouchEntries.reduce((sum, entry) => sum + Math.abs(entry.points), 0)),
-    slashPoints: Math.round(slashEntries.reduce((sum, entry) => sum + Math.abs(entry.points), 0)),
+    vouchPoints,
+    slashPoints,
+    netLedgerImpact,
+    estimatedTargetBasePoints,
+    estimatedNetSupportShare,
     analyzedSupporters: profiles.filter((profile) => profile.graphLoaded).length,
     totalSupporters: new Set(target.entries.map((entry) => entry.authorHandle.toLowerCase())).size,
     graphCoverage: ratio(analyzedVoucherLedgers, voucherHandles.length),
@@ -244,7 +254,7 @@ export function calculateIntegrityMetrics(stats: NetworkStats): IntegrityMetrics
     0,
     100,
   ));
-  const coveragePenalty = stats.graphCoverage >= 0.8 ? 0 : stats.graphCoverage >= 0.5 ? 5 : 12;
+  const coveragePenalty = stats.uniqueVouchers === 0 ? 20 : stats.graphCoverage >= 0.8 ? 0 : stats.graphCoverage >= 0.5 ? 5 : 12;
   const integrityScore = roundScore(clamp(organicSupport - coveragePenalty, 0, 100));
 
   return {
@@ -262,6 +272,13 @@ export function calculateIntegrityMetrics(stats: NetworkStats): IntegrityMetrics
 export function buildIntegrityEvidence(stats: NetworkStats, metrics: IntegrityMetrics): IntegrityEvidence[] {
   const evidence: IntegrityEvidence[] = [];
   const pct = (value: number) => `${Math.round(value * 100)}%`;
+
+  evidence.push({
+    label: "Leaderboard support dependence",
+    observation: `Observed vouches added ${stats.vouchPoints.toLocaleString()} points and slashes removed ${stats.slashPoints.toLocaleString()}, for a net ledger impact of ${stats.netLedgerImpact.toLocaleString()} points. Estimated pre-ledger/base contribution is ${stats.estimatedTargetBasePoints.toLocaleString()} points; about ${pct(stats.estimatedNetSupportShare)} of the current score is estimated to come from net incoming support. This is context, not a manipulation signal by itself.`,
+    impact: stats.estimatedNetSupportShare < 0.35 ? "positive" : "warning",
+    severity: roundScore(clamp(stats.estimatedNetSupportShare * 70, 0, 70)),
+  });
 
   evidence.push({
     label: "Voucher diversity",
