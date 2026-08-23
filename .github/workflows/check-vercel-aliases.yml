@@ -1,0 +1,33 @@
+name: Check Vercel aliases
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/check-vercel-aliases.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe Vercel endpoints
+        shell: bash
+        run: |
+          set -u
+          URLS=(
+            "https://vouchguard-ai.vercel.app"
+            "https://vouchguard-ai-maksims-projects-209202f7.vercel.app"
+            "https://vouchguard-ai-git-main-maksims-projects-209202f7.vercel.app"
+            "https://vouchguard-o877bjh4i-maksims-projects-209202f7.vercel.app"
+          )
+          for URL in "${URLS[@]}"; do
+            echo "=== $URL ==="
+            ROOT="$(curl --location --silent --output /tmp/root --write-out '%{http_code}' "$URL/" || true)"
+            HEALTH="$(curl --location --silent --output /tmp/health --write-out '%{http_code}' "$URL/api/health" || true)"
+            echo "root=$ROOT health=$HEALTH"
+            echo "root-body: $(head -c 180 /tmp/root 2>/dev/null || true)"
+            echo "health-body: $(head -c 500 /tmp/health 2>/dev/null || true)"
+          done
