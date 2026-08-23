@@ -54,6 +54,9 @@ export interface NetworkStats {
   uniqueSlashers: number;
   vouchPoints: number;
   slashPoints: number;
+  netLedgerImpact: number;
+  estimatedTargetBasePoints: number;
+  estimatedNetSupportShare: number;
   analyzedSupporters: number;
   totalSupporters: number;
   graphCoverage: number;
