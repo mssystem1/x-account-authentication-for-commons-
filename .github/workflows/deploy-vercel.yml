@@ -109,7 +109,7 @@ jobs:
           set -euo pipefail
           URL='${{ steps.deploy.outputs.url }}'
           for attempt in {1..18}; do
-            if curl --fail --silent --show-error "$URL/api/health" | tee /tmp/health.json; then
+            if curl --location --fail --silent --show-error "$URL/api/health" | tee /tmp/health.json; then
               node -e 'const h=require("/tmp/health.json"); if(!h.ok || h.mode!=="live" || !h.xaiConfigured || h.storage!=="vercel-blob") { console.error("Invalid production health", h); process.exit(1); } console.log("VouchGuard production health and Blob check passed", h)'
               exit 0
             fi
