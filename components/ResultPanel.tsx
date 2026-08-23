@@ -16,6 +16,13 @@ function evidenceIcon(item: EvidenceItem) {
   return "•";
 }
 
+function retrievalLabel(result: ScanResult): string {
+  if (result.diagnostics.retrievalMode === "x-api") return "Official X API";
+  if (result.diagnostics.retrievalMode === "scoped") return "Grok X Search · scoped";
+  if (result.diagnostics.retrievalMode === "recovery") return "Grok X Search · recovery";
+  return "Simulation";
+}
+
 export function ResultPanel({ result, standalone = false }: { result: ScanResult; standalone?: boolean }) {
   const [slashReview, setSlashReview] = useState(false);
   const [reviewed, setReviewed] = useState(false);
@@ -56,11 +63,13 @@ export function ResultPanel({ result, standalone = false }: { result: ScanResult
       <div className="profile-context">
         <div><span>History</span><p>{result.profile.accountHistory}</p></div>
         <div><span>Activity</span><p>{result.profile.activitySummary}</p></div>
+        <div className="context-row"><span>Retrieval</span><strong>{retrievalLabel(result)}</strong></div>
+        {typeof result.diagnostics.retrievedPosts === "number" && <div className="context-row"><span>Posts retrieved</span><strong>{result.diagnostics.retrievedPosts}</strong></div>}
+        {typeof result.diagnostics.analysisSampleSize === "number" && <div className="context-row"><span>Analysis sample</span><strong>{result.diagnostics.analysisSampleSize}</strong></div>}
         <div className="context-row"><span>Data coverage</span><strong>{result.coverage.postsObserved} posts · {result.coverage.distinctDaysObserved} days</strong></div>
         <div className="context-row"><span>Coverage status</span><strong>{result.coverage.sufficiency}</strong></div>
-        <div className="context-row"><span>Retrieval mode</span><strong>{result.diagnostics.retrievalMode}</strong></div>
-        <div className="context-row"><span>Search calls</span><strong>{result.diagnostics.xSearchCalls} X · {result.diagnostics.webSearchCalls} web</strong></div>
-        <div className="context-row"><span>Verified target posts</span><strong>{result.diagnostics.directTargetSources}</strong></div>
+        {result.diagnostics.retrievalMode !== "x-api" && result.diagnostics.retrievalMode !== "demo" && <div className="context-row"><span>Search calls</span><strong>{result.diagnostics.xSearchCalls} X</strong></div>}
+        <div className="context-row"><span>Evidence-linked posts</span><strong>{result.diagnostics.directTargetSources}</strong></div>
         <div className="context-row"><span>AI confidence</span><strong>{Math.round(result.confidence * 100)}% · {result.confidenceLabel}</strong></div>
         <div className="context-row"><span>Public X sources</span><strong>{sourceCount}</strong></div>
         <div className="context-row"><span>Model</span><strong>{result.model}</strong></div>
