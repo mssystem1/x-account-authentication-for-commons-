@@ -162,3 +162,5 @@ jobs:
           echo "### VouchGuard production" >> "$GITHUB_STEP_SUMMARY"
           echo "Canonical: https://$PRODUCTION_DOMAIN" >> "$GITHUB_STEP_SUMMARY"
           echo "Generated deployment: ${{ steps.deploy.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"
+
+# canonical alias validation trigger
