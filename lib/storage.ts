@@ -1,7 +1,7 @@
 import { head, put } from "@vercel/blob";
 import type { ScanResult } from "./types.ts";
 
-const CACHE_PREFIX = "vouchguard/scans/v1";
+const CACHE_PREFIX = "vouchguard/scans/v2";
 
 function pathname(handle: string): string {
   return `${CACHE_PREFIX}/${handle.toLowerCase()}.json`;
