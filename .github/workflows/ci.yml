@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - name: Wait for vg-2026.08.3 and scan @natalia77351991
+      - name: Wait for vg-2026.08.4 and scan @natalia77351991
         shell: bash
         run: |
           set -euo pipefail
@@ -50,7 +50,7 @@ jobs:
               if node - <<'NODE'
           const fs=require('fs');
           const h=JSON.parse(fs.readFileSync('/tmp/health.json','utf8'));
-          if (!h.ok || h.mode !== 'live' || !h.xaiConfigured || h.methodologyVersion !== 'vg-2026.08.3') process.exit(1);
+          if (!h.ok || h.mode !== 'live' || !h.xaiConfigured || h.methodologyVersion !== 'vg-2026.08.4') process.exit(1);
           console.log('Fresh production health', h);
           NODE
               then
@@ -62,7 +62,7 @@ jobs:
           done
 
           if [ "$READY" != "1" ]; then
-            echo "Fresh production did not become reachable with vg-2026.08.3."
+            echo "Fresh production did not become reachable with vg-2026.08.4."
             head -c 600 /tmp/root.html || true
             echo
             head -c 600 /tmp/health.json || true
@@ -103,6 +103,7 @@ jobs:
             if (values.every(v=>v===50)) throw new Error('Regression: all-50 scores returned');
             if (r.diagnostics?.neutralVectorDetected) throw new Error('Neutral vector should not be scored');
             if (!r.coverage || r.coverage.postsObserved < 5) throw new Error('Scored result lacks minimum direct X coverage');
+            if (r.diagnostics?.retrievalMode === 'recovery' && r.diagnostics?.directTargetSources < 1) throw new Error('Recovery result lacks verified direct target sources');
           } else if (r.recommendation !== 'UNSCORABLE') {
             throw new Error('Missing scores must be UNSCORABLE');
           }
