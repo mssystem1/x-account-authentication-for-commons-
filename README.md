@@ -1,101 +1,156 @@
 # VouchGuard AI
 
-> **Audit the Commons leaderboard.** See how a creator’s rank was built and whether observed support looks organic, reciprocal, concentrated, or coordinated.
+> **Audit the Commons leaderboard.** See how a creator’s rank was built — and whether incoming vouches or incoming slashes may have distorted it.
+
+**Live:** https://vouchguard-ai.vercel.app
 
 VouchGuard AI is a responsive Next.js application for **Commons Made leaderboard integrity analysis**.
 
-The normal product does **not** judge a creator from a handful of X posts and does **not** require paid X API reads. It starts with the data that actually changed the Commons score: the creator’s Commons vouch/slash ledger.
+The product uses the data that actually changes Commons scores: the creator’s **incoming vouch/slash ledger**. It reconstructs positive-support and negative-attack networks separately, computes deterministic graph statistics, and then uses **Grok 4.5** only to explain the measured evidence.
 
-## What VouchGuard does
-
-For an input such as:
-
-```text
-@natalia77351991
-```
-
-VouchGuard:
-
-1. Loads the complete incoming Commons ledger for the creator.
-2. Extracts every voucher/slasher, point impact, timestamp and source URL supplied by Commons.
-3. Loads up to 40 high-impact supporter/slasher ledgers for second-hop analysis.
-4. Reconstructs observable supporter-to-supporter and target↔supporter relationships.
-5. Measures reciprocity, connected clusters, point concentration, timing concentration and thin-support patterns.
-6. Estimates how much of the current Commons score came from net incoming ledger support.
-7. Computes deterministic integrity/risk metrics in application code.
-8. Sends those structured facts to **Grok 4.5** for a cautious human-readable verdict.
-9. Stores the finished audit in Vercel Blob for fast public `/u/<handle>` pages.
-
-The headline metric is **Commons Integrity**.
+The current methodology is **`vg-commons-2026.08.3`**.
 
 ---
 
-## Product output
+## The problem
 
-A creator audit exposes:
+A single “this creator looks organic” score is not enough for Commons.
 
-- **Commons Integrity** — overall integrity of the observed support network.
-- **Organic Support** — how independent/diverse the observed support appears.
-- **Coordination Risk** — closed-cluster, reciprocity, timing and concentration risk.
-- **Reciprocity Risk** — how much incoming support appears to have been vouched back by the target.
-- **Bot/Sybil Support Risk** — a behavioral-network risk indicator, not proof of shared ownership or automation.
-- **Net Ledger Impact** — vouch points minus slash points.
-- **Estimated Pre-ledger/Base Contribution** — current total minus observed net ledger impact.
-- **Estimated Net Support Share** — approximate portion of the current total attributable to positive net incoming support.
-- all incoming vouchers/slashes;
-- supporter graph coverage;
-- supporter-to-supporter internal edges;
-- largest supporter component;
-- top-1/top-5 point concentration;
-- 15-minute and 60-minute vouch bursts;
-- supporter Commons rank/points when available;
-- Grok verdict, organic signals, risk signals and caveats.
+An account can simultaneously have:
 
-**Support dependence is context, not guilt.** A creator can receive most of their score from vouches and still have a healthy, independent support network.
+- legitimate, diverse incoming vouches;
+- a leaderboard position that is highly dependent on incoming support;
+- hundreds of incoming slashes;
+- a possible coordinated slasher cluster;
+- or coordinated positive support and coordinated attacks at the same time.
+
+VouchGuard therefore does **not** collapse everything into one authenticity number.
+
+The v3 model answers two independent questions:
+
+### 1. Support Integrity
+
+> Does the incoming **VOUCH** network look diverse and natural, or reciprocal / concentrated / coordinated?
+
+### 2. Slash Attack Risk
+
+> Has the rank been materially hit by **SLASH** actions, and does the sampled slasher network show timing or graph patterns consistent with coordination?
+
+Heavy slashing is **not automatically called a bot attack**. VouchGuard explicitly separates **attack pressure** from **attack coordination**.
+
+---
+
+## Main output
+
+A creator report exposes:
+
+- **Support Integrity** — positive-support quality, 0–100, higher is better.
+- **Slash Attack Risk** — combined slash pressure + attack coordination, 0–100, higher is riskier.
+- **Support Coordination Risk** — reciprocity, supporter components, timing, concentration and thin-account signals.
+- **Attack Pressure** — how materially slashes affected the account regardless of who controlled the slashers.
+- **Attack Coordination Risk** — timing + sampled slasher-network relationships + thin-account/context signals.
+- **Bot/Sybil Network Risk** — conservative graph-only suspicion; never proof of ownership or automation.
+- **Rank Distortion Risk** — estimated risk that observed leaderboard position was strongly driven/distorted by coordinated support or heavy slashing.
+- **Rank Reliability** — `100 − Rank Distortion Risk`.
+
+The report also shows the complete incoming Commons ledger, top vouchers, top slashers, graph coverage, timing bursts, point concentration and Grok’s separate support/attack interpretation.
+
+---
+
+## Verdicts
+
+VouchGuard currently uses these deterministic verdict states:
+
+```text
+LIKELY_ORGANIC
+SUPPORT_REVIEW
+SUPPORT_COORDINATION_RISK
+HEAVY_SLASH_PRESSURE
+SLASH_ATTACK_RISK
+CONTESTED_MANIPULATION
+INSUFFICIENT_DATA
+```
+
+### `LIKELY_ORGANIC`
+
+Observed positive support looks healthy, graph coverage is adequate, and there is no major slash-attack signal.
+
+### `SUPPORT_REVIEW`
+
+Used when positive support cannot safely receive a strong organic verdict — for example, a rank is highly dependent on incoming vouches but only a small part of the voucher graph has been inspected.
+
+### `SUPPORT_COORDINATION_RISK`
+
+The positive VOUCH network itself contains strong coordination indicators.
+
+### `HEAVY_SLASH_PRESSURE`
+
+The rank was heavily affected by negative actions, but available Commons graph data is not sufficient to claim that the attackers are coordinated.
+
+### `SLASH_ATTACK_RISK`
+
+Heavy slash pressure is accompanied by stronger timing / connected-network / thin-account evidence.
+
+### `CONTESTED_MANIPULATION`
+
+Both the positive supporter network and the negative slasher network contain strong coordination signals.
+
+### `INSUFFICIENT_DATA`
+
+Too little Commons ledger evidence exists for a meaningful result.
 
 ---
 
 # Architecture
 
 ```mermaid
-flowchart LR
-    U[User enters creator] --> API[POST /api/scan]
-    API --> C{Fresh Blob audit?}
-    C -->|Yes| R[Return cached audit]
-    C -->|No| TL[Commons target ledger]
-    TL --> E[All incoming vouches/slashes]
-    E --> SH[Up to 40 second-hop supporter ledgers]
-    SH --> G[Support graph]
-    G --> M[Deterministic integrity metrics]
-    M --> AI[Grok 4.5 explanation]
-    AI --> R[Integrity report]
-    R --> B[(Vercel Blob)]
-    R --> UI[Desktop/mobile UI]
+flowchart TD
+    U[User enters @creator] --> API[POST /api/scan]
+    API --> CACHE{Fresh Vercel Blob audit?}
+    CACHE -->|yes| RESULT[Return audit]
+    CACHE -->|no| TARGET[Commons target ledger]
+
+    TARGET --> VOUCHES[All incoming vouches]
+    TARGET --> SLASHES[All incoming slashes]
+
+    VOUCHES --> VSAMPLE[Sample up to 30 voucher ledgers]
+    SLASHES --> SSAMPLE[Sample up to 30 slasher ledgers]
+
+    VSAMPLE --> VGRAPH[Voucher graph]
+    SSAMPLE --> SGRAPH[Slasher graph]
+
+    VGRAPH --> ENGINE[Deterministic rank-risk engine]
+    SGRAPH --> ENGINE
+    TARGET --> ENGINE
+
+    ENGINE --> SCORES[Support / attack / distortion metrics]
+    SCORES --> GROK[Grok 4.5 explanation]
+    GROK --> STORE[Vercel Blob]
+    GROK --> RESULT
+    RESULT --> UI[Responsive creator audit UI]
 ```
 
 ## System overview
 
 ```mermaid
-graph TB
+graph LR
   subgraph Browser[Desktop / Mobile]
-    HOME[Creator Auditor]
-    REPORT[Integrity Report]
-    PUBLIC[Public /u/:handle audit]
+    HOME[Creator search]
+    REPORT[Rank audit]
+    PUBLIC[Public /u/:handle]
   end
 
-  subgraph Vercel[Next.js]
+  subgraph Vercel[Next.js / Vercel]
     SCAN[/api/scan]
     HEALTH[/api/health]
-    RATE[Rate limiter]
-    ADAPTER[Commons adapter]
-    GRAPH[Graph/statistics engine]
-    GROKREPORT[Grok report layer]
-    STORE[Vercel Blob]
+    AUDIT[Audit orchestrator]
+    GRAPH[Graph engine]
+    VERDICT[Verdict engine]
+    CACHE[Vercel Blob]
   end
 
-  subgraph Commons[Commons Made API]
-    TARGET[/targets/:handle/ledger]
-    SUPPORTERS[Supporter ledgers]
+  subgraph Commons[Commons Made]
+    LEDGER[/targets/:handle/ledger]
   end
 
   subgraph xAI[xAI]
@@ -103,258 +158,196 @@ graph TB
   end
 
   HOME --> SCAN
-  SCAN --> RATE
-  SCAN --> STORE
-  SCAN --> ADAPTER
-  ADAPTER --> TARGET
-  TARGET --> SUPPORTERS
-  SUPPORTERS --> GRAPH
-  GRAPH --> GROKREPORT
-  GROKREPORT --> GROK
+  SCAN --> CACHE
+  SCAN --> AUDIT
+  AUDIT --> LEDGER
+  LEDGER --> GRAPH
+  GRAPH --> VERDICT
+  VERDICT --> GROK
+  GROK --> CACHE
+  CACHE --> PUBLIC
   GROK --> REPORT
-  REPORT --> STORE
-  STORE --> PUBLIC
-  HEALTH --> HOME
+  HEALTH --> Browser
 ```
 
 ---
 
 # Commons data source
 
-VouchGuard uses the public per-target Genesis ledger:
+The core endpoint is:
 
 ```text
 GET https://api.commonsmade.com/game/events/genesis/targets/{handle}/ledger
 ```
 
-The normalized target data contains:
+VouchGuard normalizes the response into:
 
 ```ts
-{
-  handle,
-  display,
-  rank,
-  totalPoints,
-  entries: [
-    {
-      kind: "vouch" | "slash",
-      authorHandle,
-      authorAvatarUrl,
-      points,
-      tweetText,
-      tweetUrl,
-      createdAt
-    }
-  ]
+interface CommonsLedgerEntry {
+  kind: "vouch" | "slash";
+  authorHandle: string;
+  points: number;
+  tweetUrl: string | null;
+  createdAt: string | null;
 }
 ```
 
-The target ledger is read in full. Second-hop inspection is bounded to 40 high-priority actors to keep latency/API load controlled; vouchers are prioritized, then actors are ordered by absolute point impact. The report shows second-hop **graph coverage** so partial analysis is visible.
+The target ledger gives all incoming actions that affected the creator. To reconstruct second-hop relationships, VouchGuard loads ledgers of selected vouchers and slashers.
+
+There is no assumption that an incoming slash means the target did something wrong, or that a large slash wave automatically means bots.
 
 ---
 
-# How the graph is reconstructed
+# Independent second-hop sampling
 
-Suppose Commons records:
+This is critical to v3.
 
-```text
-Alice → Target
-Bob   → Target
-Carol → Target
-```
+Older versions used one shared second-hop quota. A heavily-vouched creator could consume every graph slot, leaving **zero slasher ledgers inspected** even after hundreds of incoming slashes.
 
-If Bob appears as an incoming voucher in Alice’s own target ledger, VouchGuard observes:
+v3 uses separate budgets:
 
 ```text
-Bob → Alice
+up to 30 voucher ledgers
++
+up to 30 slasher ledgers
 ```
 
-If Target appears as an incoming voucher in Alice’s ledger, then the target/supporter relationship is reciprocal:
+Each side uses a mixed strategy:
 
 ```text
-Alice  → Target
-Target → Alice
+~60% highest-impact actors
++
+remaining slots from most-recent actors
 ```
 
-From these observed edges the engine calculates connected components, internal edge density, reciprocity and cluster concentration.
+This lets the graph see both:
 
-No hidden device/IP data is used.
+- accounts that moved the score most;
+- accounts involved in recent timing bursts.
+
+If the same actor appears on both sides, the union prevents duplicate fetches.
 
 ---
 
-# Rank-dependence context
+# Support Integrity
 
-Methodology **`vg-commons-2026.08.2`** adds explicit analysis of how much the current rank appears to rely on incoming support.
+The positive-support engine considers:
 
-```text
-Net Ledger Impact = Vouch Points − Slash Points
+- number of unique vouchers;
+- total vouch points;
+- target ↔ voucher reciprocity;
+- positive links among voucher accounts;
+- largest connected voucher component;
+- observed edges per sampled voucher;
+- top-1 / top-5 point concentration;
+- HHI concentration;
+- 15-minute / 60-minute vouch bursts;
+- thin, low-power sampled vouchers;
+- voucher graph coverage.
 
-Estimated Pre-ledger/Base Contribution =
-  Current Commons Total − Net Ledger Impact
-
-Estimated Net Support Share =
-  max(0, Net Ledger Impact) / Current Commons Total
-```
-
-The support share is capped to 0–100% in the UI.
-
-These values are labelled **estimated** because they are reconstructed from the current Commons total and the observed ledger; they are not presented as official Commons base-score fields.
-
-They do **not** directly raise Coordination Risk. Their job is to answer a separate question:
-
-> Did this creator mainly bring a strong underlying score into the leaderboard, or is the current score heavily dependent on incoming vouch support?
+A large connected component can matter even when global graph density appears small, because only a subset of the full supporter graph is sampled.
 
 ---
 
-# Deterministic graph metrics
+# Slash Attack Risk
 
-Implemented in `lib/integrity.ts`.
+The negative side is analyzed independently.
 
-### Support structure
+## Attack Pressure
 
-- incoming vouch/slash count;
-- unique vouchers/slashers;
-- vouch/slash points;
-- net ledger impact;
-- estimated base/support share;
-- graph coverage.
+Measures how strongly slashes changed the creator’s observed rank using:
 
-### Reciprocity
+- unique slasher count;
+- total slash points;
+- negative action share;
+- slash impact relative to estimated pre-ledger/base contribution.
 
-- number/share of vouchers whose own ledger contains a target→supporter vouch.
+High pressure means **the rank was heavily affected**. It does not establish bot ownership.
 
-### Coordination
+## Attack Coordination Risk
 
-- internal supporter vouch edges;
-- internal slash edges;
-- largest connected supporter component;
-- largest-component share;
-- internal directed-edge density.
+Measures coordination evidence using:
 
-### Concentration
+- 5-minute slash bursts;
+- 15-minute slash bursts;
+- 60-minute slash bursts;
+- positive links among sampled slasher accounts;
+- largest connected slasher component;
+- point concentration;
+- thin-account context;
+- slasher graph coverage.
 
-- top supporter point share;
-- top five point share;
-- HHI of incoming vouch power.
-
-### Timing
-
-- maximum vouches in any 15-minute window;
-- maximum vouches in any 60-minute window;
-- burst share of all incoming vouches.
-
-### Thin-support context
-
-For each voucher, action impact is converted into an approximate base-power context using the campaign’s ~35% vouch-power relationship. A voucher is only treated as “thin/low-power” when it is both far below the observed supporter median and has very little incoming Commons support in the loaded graph.
-
-No single feature proves manipulation.
+If pressure is high but graph coverage is low, VouchGuard prefers `HEAVY_SLASH_PRESSURE` rather than pretending coordination was proven or disproven.
 
 ---
 
-# Scoring philosophy
+# Rank dependence and distortion
 
-Strong coordination evidence should usually require a **combination** such as:
-
-```text
-large closed supporter component
-+ high internal edge density
-+ high target reciprocity
-+ compressed timing
-+ concentrated point impact
-```
-
-Examples:
-
-- Reciprocity alone can be normal between builders/friends.
-- One large vouch can come from a legitimate high-reputation creator.
-- A high net support share only means the score is support-dependent; it does not mean the support is suspicious.
-- Dense reciprocal supporter rings plus synchronized action timing are more concerning than any one signal alone.
-
-The current numeric metrics are:
+VouchGuard derives context from the observed ledger:
 
 ```text
-integrityScore
-organicSupport
-coordinationRisk
-reciprocityRisk
-concentrationRisk
-timingRisk
-lowQualitySupportRisk
-botSybilSupportRisk
+Net Ledger Impact
+  = Vouch Points − Slash Points
+
+Estimated Pre-Ledger/Base Contribution
+  = Current Commons Total − Net Ledger Impact
 ```
 
-If too little support exists for a meaningful network judgement, Grok/deterministic verdict becomes `INSUFFICIENT_DATA` and the UI suppresses headline/component numbers rather than presenting sparse evidence as certainty.
+This is an **estimate from observed ledger arithmetic**, not an official Commons base-score field.
+
+For positive totals:
+
+```text
+Estimated Net Support Share
+  = max(Net Ledger Impact, 0) / Current Total
+```
+
+A 90% support share does **not** mean manipulation. It means the current positive total depends heavily on incoming support, so stronger graph coverage is required before calling that rank organically supported.
+
+`Rank Distortion Risk` combines:
+
+- suspicious positive-support influence weighted by support dependence;
+- negative slash pressure weighted by how dominant negative actions are.
 
 ---
 
-# Grok 4.5 role
+# Grok 4.5
 
-Grok is **not the crawler** and **not the numeric scorer**.
+Grok is **not the scoring engine**.
 
-It receives structured Commons facts already calculated by VouchGuard, for example:
+The TypeScript application computes all numeric metrics and the controlling verdict first. Grok then receives:
 
-```json
-{
-  "rank": 327,
-  "totalPoints": 284920,
-  "metrics": {
-    "integrityScore": 84,
-    "organicSupport": 88,
-    "coordinationRisk": 19,
-    "reciprocityRisk": 12
-  },
-  "stats": {
-    "uniqueVouchers": 17,
-    "estimatedNetSupportShare": 0.41,
-    "largestComponentShare": 0.18,
-    "reciprocalVoucherRatio": 0.12,
-    "maxVouches15m": 2
-  },
-  "supporters": []
-}
-```
-
-Grok uses `grok-4.5-latest`, low reasoning effort and strict structured output. It returns one cautious verdict:
-
-```text
-LIKELY_ORGANIC
-MIXED
-HIGH_COORDINATION_RISK
-INSUFFICIENT_DATA
-```
-
-plus headline, explanation, organic signals, risk signals, caveats and confidence.
-
-If xAI fails or `XAI_API_KEY` is absent, the audit still returns a deterministic fallback explanation from the same graph metrics.
-
----
-
-# UI / UX
-
-Homepage:
-
-```text
-COMMONS CREATOR
-@username
-[AUDIT CREATOR]
-```
-
-Main report:
-
-- Commons rank / total points;
-- Commons Integrity headline;
-- Organic Support / Coordination / Reciprocity / Bot-Sybil Support Risk;
-- net ledger impact;
-- estimated pre-ledger/base contribution;
-- estimated net support share;
+- target rank / total points;
+- deterministic metrics;
 - network statistics;
-- deterministic evidence cards;
-- Grok verdict;
-- supporter table;
-- original incoming Commons ledger;
-- public share URL.
+- top sampled voucher rows;
+- top sampled slasher rows;
+- evidence objects.
 
-The supporter table remains horizontally scrollable inside its own container on phones and never forces page-wide overflow.
+Grok returns:
+
+```text
+headline
+explanation
+supportAssessment
+attackAssessment
+organicSignals[]
+supportRiskSignals[]
+attackRiskSignals[]
+caveats[]
+confidence
+```
+
+The code overwrites any Grok verdict with the deterministic application verdict, so the LLM cannot silently change the classification.
+
+The prompt explicitly instructs Grok that:
+
+- heavy slashing is not proof of bots;
+- low slasher coverage means coordination is unresolved, not absent;
+- Bot/Sybil Network Risk is probabilistic;
+- reciprocity alone is not abuse;
+- high support dependence can simply mean popularity;
+- external facts not present in the Commons graph must not be invented.
 
 ---
 
@@ -379,61 +372,71 @@ components/
 lib/
   audit.ts
   commons.ts
+  grok-integrity.ts
   integrity.ts
   integrity-types.ts
-  grok-integrity.ts
-  storage.ts
+  verdict.ts
   rate-limit.ts
+  storage.ts
   utils.ts
 
 sdk/
   index.ts
 
-tests/
-  integrity.test.ts
-  handle.test.ts
-  scoring.test.ts
-
 e2e/
   ui.spec.ts
 
-scripts/
-  e2e-simulate.mjs
-```
+tests/
+  integrity.test.ts
+  ...
 
-Older X-account-analysis modules remain available for a future optional deep-X check, but they are not part of the normal Commons leaderboard audit.
+.github/workflows/
+  ci.yml
+  live-production.yml
+  deploy-vercel.yml
+```
 
 ---
 
 # Environment variables
 
-| Variable | Required | Purpose |
-|---|---:|---|
-| `XAI_API_KEY` | Recommended | Grok verdict/explanation |
-| `XAI_MODEL` | No | Defaults to `grok-4.5-latest` |
-| `BLOB_READ_WRITE_TOKEN` | Recommended | Durable audit cache/public pages |
-| `SCAN_CACHE_TTL_SECONDS` | No | Defaults to `21600` (6h) |
-| `SCAN_RATE_LIMIT_PER_MINUTE` | No | Defaults to `12` |
-| `VOUCHGUARD_DEMO_MODE` | No | Synthetic graph mode |
-| `NEXT_PUBLIC_APP_URL` | Recommended | Canonical share origin |
-| `X_BEARER_TOKEN` | No | Reserved for optional future deep-X checks |
+The core audit does **not require an X API Bearer Token**.
 
-Recommended Vercel production settings:
+```env
+# Required for Grok explanations in production.
+XAI_API_KEY=
 
-```text
-XAI_API_KEY=<secret>
+# Optional model override.
 XAI_MODEL=grok-4.5-latest
+
+# Created automatically when Vercel Blob is connected.
+BLOB_READ_WRITE_TOKEN=
+
+# Default 6 hour audit cache.
 SCAN_CACHE_TTL_SECONDS=21600
+
+# Per-instance rate limiter.
 SCAN_RATE_LIMIT_PER_MINUTE=12
+
+# Must be false in production.
 VOUCHGUARD_DEMO_MODE=false
+
+# Canonical deployment URL.
 NEXT_PUBLIC_APP_URL=https://vouchguard-ai.vercel.app
 ```
-
-Connect Vercel Blob through **Project → Storage** so `BLOB_READ_WRITE_TOKEN` is injected automatically.
 
 ---
 
 # Local development
+
+Requirements:
+
+```text
+Node.js 22.x
+npm
+```
+
+Install and run:
 
 ```bash
 npm install
@@ -441,7 +444,15 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Demo mode does not call Commons or xAI:
+Open:
+
+```text
+http://localhost:3000
+```
+
+## Demo mode
+
+No Commons or xAI calls are required for synthetic UI testing:
 
 ```bash
 VOUCHGUARD_DEMO_MODE=true npm run dev
@@ -450,10 +461,16 @@ VOUCHGUARD_DEMO_MODE=true npm run dev
 Useful demo handles:
 
 ```text
-alice_builder     # independent synthetic support
-organic_creator   # independent synthetic support
-bot_swarm_01      # closed reciprocal ring
+alice_builder
+bot_swarm_01
+attacked_victim
 ```
+
+`attacked_victim` is specifically a regression scenario for:
+
+> clean/independent positive support + a mass slash wave
+
+It must never receive a blanket `LIKELY_ORGANIC` verdict.
 
 ---
 
@@ -463,8 +480,8 @@ bot_swarm_01      # closed reciprocal ring
 
 ```json
 {
-  "handle": "natalia77351991",
-  "refresh": false
+  "handle": "cryptokaai",
+  "refresh": true
 }
 ```
 
@@ -472,35 +489,41 @@ Representative response shape:
 
 ```json
 {
-  "handle": "natalia77351991",
-  "methodologyVersion": "vg-commons-2026.08.2",
+  "handle": "cryptokaai",
+  "methodologyVersion": "vg-commons-2026.08.3",
   "commons": {
-    "rank": 742,
-    "totalPoints": 188000
+    "rank": 94238,
+    "totalPoints": -391033
   },
   "metrics": {
-    "integrityScore": 86,
-    "organicSupport": 90,
-    "coordinationRisk": 14,
-    "reciprocityRisk": 9,
-    "botSybilSupportRisk": 12
+    "supportIntegrity": 74,
+    "supportCoordinationRisk": 34,
+    "slashAttackRisk": 81,
+    "attackPressure": 92,
+    "attackCoordinationRisk": 66,
+    "botSybilNetworkRisk": 50,
+    "rankDistortionRisk": 74,
+    "rankReliability": 26
   },
   "stats": {
-    "uniqueVouchers": 14,
-    "vouchPoints": 71000,
-    "slashPoints": 5000,
-    "netLedgerImpact": 66000,
-    "estimatedTargetBasePoints": 122000,
-    "estimatedNetSupportShare": 0.35,
-    "graphCoverage": 1
+    "uniqueVouchers": 238,
+    "uniqueSlashers": 175,
+    "vouchPoints": 2748314,
+    "slashPoints": 3179069,
+    "vouchGraphCoverage": 0.126,
+    "slashGraphCoverage": 0.171
   },
   "report": {
-    "verdict": "LIKELY_ORGANIC"
+    "verdict": "HEAVY_SLASH_PRESSURE"
   }
 }
 ```
 
+Numbers are live data and can change as Commons changes.
+
 ## `GET /api/health`
+
+Expected production shape:
 
 ```json
 {
@@ -511,13 +534,13 @@ Representative response shape:
   "primaryData": "commons-ledger",
   "xApiRequired": false,
   "storage": "vercel-blob",
-  "methodologyVersion": "vg-commons-2026.08.2"
+  "methodologyVersion": "vg-commons-2026.08.3"
 }
 ```
 
 ---
 
-# SDK
+# TypeScript SDK
 
 ```ts
 import { VouchGuardClient } from "./sdk/index";
@@ -526,50 +549,75 @@ const guard = new VouchGuardClient({
   baseUrl: "https://vouchguard-ai.vercel.app",
 });
 
-const audit = await guard.auditCreator("natalia77351991");
-console.log(audit.metrics.integrityScore);
-console.log(audit.stats.estimatedNetSupportShare);
+const audit = await guard.auditCreator("cryptokaai", { refresh: true });
+
+console.log(audit.metrics.supportIntegrity);
+console.log(audit.metrics.slashAttackRisk);
+console.log(audit.metrics.rankReliability);
 console.log(audit.report.verdict);
 ```
 
-`scanAccount()` remains as a backwards-compatible alias for `auditCreator()`.
-
 ---
 
-# Testing
+# Tests
 
-Standard validation:
+## Static / unit / build
 
 ```bash
 npm run typecheck
 npm test
 npm run build
+```
+
+The integrity suite includes regressions for:
+
+- independent organic-looking supporter networks;
+- reciprocal voucher rings;
+- rank-dependence arithmetic;
+- slash-adjusted net support;
+- organic vouches + mass slashing;
+- independent voucher and slasher graph construction.
+
+## Production-server E2E simulation
+
+```bash
 npm run test:e2e
 ```
 
-Browser QA:
+## Desktop + mobile UI QA
 
 ```bash
 npx playwright install chromium
 npm run test:ui
 ```
 
-CI checks:
+The browser suite checks:
 
-- graph/unit tests;
-- production Next.js build;
-- organic and closed-ring synthetic E2E;
-- desktop audit flow;
-- 390px mobile audit flow;
-- 360px supporter-table containment;
-- page-wide horizontal overflow;
-- methodology mobile layout.
+- 1440px desktop report;
+- 390px phone report;
+- 360px table containment;
+- no page-level horizontal overflow;
+- support + attack sections;
+- attack-victim verdict UX;
+- methodology mobile readability.
 
-The manual **Live Production Validation** GitHub workflow checks the real public app and performs a forced Commons audit.
+## Live production validation
+
+Use GitHub Actions → **Live Production Validation**.
+
+It verifies:
+
+- public production URL;
+- `/api/health`;
+- methodology version;
+- live Commons audit;
+- all dual-axis metrics;
+- voucher/slasher graph statistics;
+- Grok support and attack explanations.
 
 ---
 
-# Deployment
+# Vercel
 
 Production target:
 
@@ -577,35 +625,41 @@ Production target:
 https://vouchguard-ai.vercel.app
 ```
 
-After each production deployment verify:
+The project uses standard Next.js server routes and Vercel Blob. No database is required for v1.
 
-```text
-/
-/api/health
-```
-
-Then run a real audit and confirm:
-
-- target Commons rank/total are populated;
-- incoming target ledger events appear;
-- second-hop graph coverage is visible;
-- rank-dependence values are present;
-- integrity metrics are numeric when data is sufficient;
-- Grok/fallback verdict exists;
-- `/u/<handle>` survives reload through Blob.
+Do not expose `XAI_API_KEY` or `BLOB_READ_WRITE_TOKEN` in browser-side environment variables.
 
 ---
 
-# Safety and interpretation
+# Interpretation and safety
 
-VouchGuard is an integrity-analysis tool, not an identity oracle.
+VouchGuard is an **integrity / anomaly decision-support system**, not an accusation engine.
 
-It does **not** claim that:
+It can say:
 
-- an account is definitively a bot;
-- multiple accounts definitely share one owner;
-- reciprocal support is automatically abusive;
-- a high support share is manipulation;
-- a concentrated vouch from a strong creator is automatically suspicious.
+```text
+heavy slash pressure
+support coordination risk
+slash attack risk
+Bot/Sybil network risk
+rank distortion risk
+```
 
-The application exposes observable Commons relationships and probabilistic network interpretation. Users should inspect the supporter table, source ledger, graph coverage and caveats before drawing conclusions.
+It should not state as fact:
+
+```text
+this person used bots
+these accounts share one owner
+this creator is a scammer
+this slasher is a Sybil
+```
+
+Those claims require evidence that Commons ledger graph structure alone does not establish.
+
+The purpose of the product is to make the structure visible so users and the Commons team can investigate the right accounts and clusters.
+
+---
+
+## License
+
+Add the license that matches the intended public distribution model before final public release.
