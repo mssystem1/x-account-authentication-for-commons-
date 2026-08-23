@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Verify health and real Commons audit
+      - name: Verify health and real Commons rank audit
         shell: bash
         env:
           HANDLE: ${{ inputs.handle }}
@@ -30,7 +30,7 @@ jobs:
           console.log('Production health:', h);
           if (!h.ok || h.mode !== 'live') throw new Error('Production runtime is not healthy');
           if (h.primaryData !== 'commons-ledger' || h.xApiRequired !== false) throw new Error('Commons-ledger architecture is not live');
-          if (h.methodologyVersion !== 'vg-commons-2026.08.2') throw new Error(`Expected vg-commons-2026.08.2, got ${h.methodologyVersion}`);
+          if (h.methodologyVersion !== 'vg-commons-2026.08.3') throw new Error(`Expected vg-commons-2026.08.3, got ${h.methodologyVersion}`);
           NODE
 
           HTTP="$(curl --location --silent --show-error --output /tmp/audit.json --write-out '%{http_code}' \
@@ -57,13 +57,15 @@ jobs:
             sourceEntries:r.sourceEntries?.length
           }, null, 2));
           if (r.mode !== 'live') throw new Error('Not a live audit');
-          if (typeof r.metrics?.integrityScore !== 'number') throw new Error('Missing Commons Integrity score');
-          if (!r.stats || typeof r.stats.uniqueVouchers !== 'number') throw new Error('Missing Commons network stats');
-          if (typeof r.stats.netLedgerImpact !== 'number') throw new Error('Missing net ledger impact');
-          if (typeof r.stats.estimatedTargetBasePoints !== 'number') throw new Error('Missing estimated target base');
-          if (typeof r.stats.estimatedNetSupportShare !== 'number' || r.stats.estimatedNetSupportShare < 0 || r.stats.estimatedNetSupportShare > 1) throw new Error('Invalid estimated net support share');
-          if (!Array.isArray(r.supporters)) throw new Error('Missing supporter graph rows');
+          for (const key of ['supportIntegrity','supportCoordinationRisk','slashAttackRisk','attackPressure','attackCoordinationRisk','botSybilNetworkRisk','rankDistortionRisk','rankReliability']) {
+            if (typeof r.metrics?.[key] !== 'number') throw new Error(`Missing metric ${key}`);
+          }
+          for (const key of ['uniqueVouchers','uniqueSlashers','vouchPoints','slashPoints','netLedgerImpact','estimatedTargetBasePoints','estimatedNetSupportShare','vouchGraphCoverage','slashGraphCoverage']) {
+            if (typeof r.stats?.[key] !== 'number') throw new Error(`Missing stat ${key}`);
+          }
+          if (!Array.isArray(r.supporters)) throw new Error('Missing voucher/slasher graph rows');
           if (!Array.isArray(r.sourceEntries)) throw new Error('Missing target Commons ledger events');
-          if (!r.report?.verdict) throw new Error('Missing integrity verdict');
-          if (r.methodologyVersion !== 'vg-commons-2026.08.2') throw new Error(`Unexpected methodology ${r.methodologyVersion}`);
+          if (!r.report?.verdict) throw new Error('Missing rank verdict');
+          if (typeof r.report?.supportAssessment !== 'string' || typeof r.report?.attackAssessment !== 'string') throw new Error('Missing dual-axis Grok interpretation');
+          if (r.methodologyVersion !== 'vg-commons-2026.08.3') throw new Error(`Unexpected methodology ${r.methodologyVersion}`);
           NODE
