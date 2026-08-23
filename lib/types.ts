@@ -3,6 +3,7 @@ export type EvidenceImpact = "positive" | "warning" | "risk";
 export type Recommendation = "VOUCH" | "SKIP" | "REVIEW_SLASH" | "UNSCORABLE";
 export type ConfidenceLabel = "low" | "medium" | "high";
 export type DataSufficiency = "sufficient" | "limited" | "insufficient";
+export type RetrievalMode = "scoped" | "recovery" | "demo";
 
 export interface AccountProfile {
   handle: string;
@@ -62,6 +63,9 @@ export interface RiskScores {
 
 export interface ScanDiagnostics {
   xSearchCalls: number;
+  webSearchCalls: number;
+  retrievalMode: RetrievalMode;
+  directTargetSources: number;
   neutralVectorDetected: boolean;
 }
 
