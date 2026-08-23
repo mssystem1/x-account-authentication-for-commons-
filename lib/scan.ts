@@ -16,17 +16,26 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
   }
 
   const demo = process.env.VOUCHGUARD_DEMO_MODE === "true";
-  const { investigation, model, xSearchCalls } = demo
-    ? { investigation: demoInvestigation(handle), model: "demo-grok-4.5", xSearchCalls: 1 }
+  const { investigation, model, xSearchCalls, webSearchCalls, retrievalMode, directTargetSources } = demo
+    ? {
+        investigation: demoInvestigation(handle),
+        model: "demo-grok-4.5",
+        xSearchCalls: 1,
+        webSearchCalls: 0,
+        retrievalMode: "demo" as const,
+        directTargetSources: 0,
+      }
     : await investigateWithGrok(handle);
 
   const neutralVectorDetected = isNeutralMetricVector(investigation);
   const coverage = investigation.coverage;
+  const searchCalls = xSearchCalls + webSearchCalls;
   const insufficient =
     !coverage.profileResolved ||
     coverage.sufficiency === "insufficient" ||
     coverage.postsObserved < 5 ||
-    xSearchCalls < 1 ||
+    searchCalls < 1 ||
+    (retrievalMode === "recovery" && directTargetSources < 1) ||
     neutralVectorDetected;
 
   let confidence = normalizeConfidence(investigation.confidence);
@@ -38,7 +47,7 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
   const createdAt = new Date().toISOString();
   const sourceUrls = unique(investigation.evidence.flatMap((item) => item.sourceUrls));
   const summary = insufficient
-    ? `VouchGuard could not gather enough direct X evidence to score @${handle} reliably. ${coverage.note}`
+    ? `VouchGuard could not gather enough verified X evidence to score @${handle} reliably. ${coverage.note}`
     : investigation.summary;
 
   const result: ScanResult = {
@@ -56,6 +65,9 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
     coverage,
     diagnostics: {
       xSearchCalls,
+      webSearchCalls,
+      retrievalMode,
+      directTargetSources,
       neutralVectorDetected,
     },
     evidence: investigation.evidence,
@@ -66,7 +78,7 @@ export async function scanAccount(input: string, refresh = false): Promise<ScanR
     permalink: `${appOrigin()}/u/${handle}`,
   };
 
-  // Never persist an unscorable result. A temporary X Search retrieval failure
+  // Never persist an unscorable result. A temporary search/retrieval failure
   // should be retried on the next scan rather than cached for hours.
   if (scores) {
     await writeCachedScan(result).catch((error) => {
