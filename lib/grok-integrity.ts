@@ -6,7 +6,7 @@ import type {
   NetworkStats,
   SupporterProfile,
 } from "./integrity-types.ts";
-import { deterministicVerdict } from "./integrity.ts";
+import { rankVerdict } from "./verdict.ts";
 import { clamp } from "./utils.ts";
 
 const VERDICTS: IntegrityVerdict[] = [
@@ -72,7 +72,7 @@ function confidenceCap(stats: NetworkStats): number {
 }
 
 function fallbackReport(metrics: IntegrityMetrics, stats: NetworkStats, reason?: string): GrokIntegrityReport {
-  const verdict = deterministicVerdict(metrics, stats);
+  const verdict = rankVerdict(metrics, stats);
   return {
     verdict,
     headline: headlineFor(verdict),
@@ -145,7 +145,7 @@ export async function buildGrokIntegrityReport(input: {
     graphLoaded: supporter.graphLoaded,
   });
 
-  const deterministic = deterministicVerdict(input.metrics, input.stats);
+  const deterministic = rankVerdict(input.metrics, input.stats);
   const prompt = `You are VouchGuard's Commons leaderboard integrity analyst.\n\nYour job is to explain TWO DIFFERENT AXES for @${input.handle}:\n1) SUPPORT INTEGRITY: whether incoming VOUCH support looks diverse/natural or coordinated.\n2) SLASH ATTACK RISK: whether incoming SLASH activity looks like ordinary negative community action, heavy slash pressure, or a coordination-suspicious attack pattern.\n\nThe deterministic application already calculated every numeric metric and the controlling verdict ${deterministic}. Do NOT recalculate scores and do NOT override that verdict. Return verdict exactly as ${deterministic}.\n\nCritical rules:\n- Heavy slashing is NOT proof of bots. Distinguish attack PRESSURE from attack COORDINATION.\n- A low attackCoordinationRisk with low slasher graph coverage means coordination is unresolved, not disproven.\n- 'Bot/Sybil Network Risk' is a behavioral graph signal only; never claim shared ownership or automation as fact.\n- High net support dependence can mean popularity. It warrants caution when graph coverage is low, but is not manipulation by itself.\n- Reciprocity alone is not proof of manipulation.\n- A large connected supporter component matters even when global edge density is low, especially with partial graph sampling.\n- Do not use follower count, X Premium, external posts, reputation, or facts not present in this dataset.\n- If the target was heavily slashed, explain that a high support-integrity score does NOT mean the overall rank is trustworthy or unaffected.\n\nDATA:\n${JSON.stringify({ rank: input.rank, totalPoints: input.totalPoints, deterministicVerdict: deterministic, metrics: input.metrics, stats: input.stats, topVouchers: voucherRows.map(compact), topSlashers: slasherRows.map(compact), evidence: input.evidence })}`;
 
   const controller = new AbortController();
@@ -165,8 +165,6 @@ export async function buildGrokIntegrityReport(input: {
     const payload = await response.json() as XaiResponse;
     if (!response.ok) throw new Error(payload.error?.message || `xAI request failed with HTTP ${response.status}`);
     const report = parseReport(JSON.parse(responseText(payload)) as unknown);
-
-    // Application metrics own the verdict; Grok is the explanation layer.
     report.verdict = deterministic;
     report.confidence = Math.min(report.confidence, confidenceCap(input.stats));
     return report;
