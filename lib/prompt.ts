@@ -12,19 +12,11 @@ INVESTIGATION ORDER:
 5. Examine conversational quality, topic continuity, repeated counterparties, campaign participation, templating, posting cadence, and reciprocal-support behavior.
 6. Only after collecting direct account evidence, assign the sub-signals.
 
-SAMPLING TARGET:
-- If at least 30 posts are available, inspect at least 30 posts distributed across at least 10 distinct days and multiple parts of the date window.
-- If fewer than 30 posts are available, inspect as many direct posts as X Search provides.
-- Count only posts actually encountered through X Search. Never estimate or invent postsObserved or distinctDaysObserved.
-- If the exact profile cannot be resolved, or fewer than 5 direct posts can be inspected, mark coverage.sufficiency as "insufficient" and confidence <= 0.25.
-- If 5–14 posts or a narrow time slice are available, normally mark coverage.sufficiency as "limited" and keep confidence conservative.
-- "sufficient" should require enough direct account evidence to support account-level judgments.
-
 IMPORTANT DEFINITIONS:
 - Authenticity: continuity of identity, original expression, meaningful conversations, persistent interests/projects, and diverse social behavior. A pseudonymous account can still be authentic.
 - Farmer behavior: human or automated behavior primarily optimized around rewards, points, reciprocal engagement, airdrops, vouches, quests, giveaways, or campaign hopping. A farmer can be a real human.
 - Bot behavior: automation-like cadence, templating, repeated replies, implausible activity timing, low semantic variety, or mechanically generated interactions.
-- Sybil/coordination risk: target-side evidence of unusually closed reciprocal networks, synchronized-looking behavior, repeated counterparties, highly overlapping interaction patterns, or templated cross-account behavior. This is a RISK signal, not proof that one person owns several accounts. If X Search is scoped to the target and cross-account evidence cannot be verified, state that limitation and do not overstate networkCoordination.
+- Sybil/coordination risk: target-side evidence of unusually closed reciprocal networks, synchronized-looking behavior, repeated counterparties, highly overlapping interaction patterns, or templated cross-account behavior. This is a RISK signal, not proof that one person owns several accounts. Because the search is intentionally scoped to the target account, do not overstate networkCoordination when counterparties cannot be independently inspected.
 
 DO NOT:
 - Treat participation in Commons, airdrops, crypto, Kaito, points programs, or frequent posting by itself as proof of farming.
@@ -44,6 +36,10 @@ Evidence must be concise and tied to public X source URLs whenever possible. Inc
 
 The application—not you—will compute the final Authenticity, Farmer Risk, Bot Risk, Sybil Risk, Vouch Confidence and action guidance from these subsignals.`;
 
-export function investigationPrompt(handle: string, fromDate: string, toDate: string): string {
-  return `${SYSTEM_PROMPT}\n\nTARGET: @${handle}\nWINDOW: ${fromDate} through ${toDate}\n\nFirst resolve the exact @${handle} profile, then investigate @${handle}'s OWN account-level behavior across the window. Do not substitute posts that merely mention @${handle}. Use X Search enough times to obtain a representative sample when available. Return only the structured response requested by the API schema.`;
+export function investigationPrompt(handle: string, fromDate: string, toDate: string, depth: "standard" | "fallback" = "standard"): string {
+  const sampling = depth === "standard"
+    ? `Aim to inspect roughly 18-24 direct posts spread across at least 6 distinct days when available. If fewer posts are available, inspect as many as possible. A sufficient account-level result normally requires at least 15 direct posts across several days. If 5-14 direct posts are available, mark coverage.sufficiency as "limited". If fewer than 5 direct posts are available or the exact profile cannot be resolved, mark it "insufficient" and confidence <= 0.25.`
+    : `This is a bounded fallback scan. Aim to inspect roughly 8-12 direct posts across at least 3 distinct days when available. If 5-11 direct posts are available, normally mark coverage.sufficiency as "limited". If fewer than 5 direct posts are available or the exact profile cannot be resolved, mark it "insufficient" and confidence <= 0.25. Do not spend extra turns chasing perfect coverage.`;
+
+  return `${SYSTEM_PROMPT}\n\nTARGET: @${handle}\nWINDOW: ${fromDate} through ${toDate}\nSCAN DEPTH: ${depth}\n\n${sampling}\n\nCount only posts actually encountered through X Search. Never estimate postsObserved or distinctDaysObserved. First resolve the exact @${handle} profile, then investigate @${handle}'s OWN account-level behavior. Do not substitute posts that merely mention @${handle}. Finish within the available tool-turn budget and return only the structured response requested by the API schema.`;
 }
