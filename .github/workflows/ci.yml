@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - name: Wait for vg-2026.08.2 and scan @natalia77351991
+      - name: Wait for vg-2026.08.3 and scan @natalia77351991
         shell: bash
         run: |
           set -euo pipefail
@@ -50,7 +50,7 @@ jobs:
               if node - <<'NODE'
           const fs=require('fs');
           const h=JSON.parse(fs.readFileSync('/tmp/health.json','utf8'));
-          if (!h.ok || h.mode !== 'live' || !h.xaiConfigured || h.methodologyVersion !== 'vg-2026.08.2') process.exit(1);
+          if (!h.ok || h.mode !== 'live' || !h.xaiConfigured || h.methodologyVersion !== 'vg-2026.08.3') process.exit(1);
           console.log('Fresh production health', h);
           NODE
               then
@@ -62,7 +62,7 @@ jobs:
           done
 
           if [ "$READY" != "1" ]; then
-            echo "Fresh production did not become reachable with vg-2026.08.2."
+            echo "Fresh production did not become reachable with vg-2026.08.3."
             head -c 600 /tmp/root.html || true
             echo
             head -c 600 /tmp/health.json || true
