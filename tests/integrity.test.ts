@@ -9,7 +9,7 @@ function targetLedger(handles: string[], closeTiming = false): CommonsLedger {
     handle: "target",
     display: "Target",
     rank: 500,
-    totalPoints: 100000,
+    totalPoints: 300000,
     entries: handles.map((handle, index) => ({
       kind: "vouch",
       authorHandle: handle,
@@ -77,6 +77,43 @@ test("independent Commons supporters produce strong organic score", () => {
   assert.equal(stats.internalVouchEdges, 0);
   assert.ok(metrics.organicSupport >= 75);
   assert.ok(metrics.coordinationRisk < 35);
+});
+
+test("rank-dependence context reconstructs estimated pre-ledger contribution", () => {
+  const handles = Array.from({ length: 12 }, (_, i) => `creator_${i}`);
+  const target = targetLedger(handles, false);
+  const ledgers = independentLedgers(handles);
+  const profiles = buildSupporterProfiles(target, ledgers);
+  const stats = calculateNetworkStats(target, ledgers, profiles);
+
+  assert.equal(stats.vouchPoints, 153000);
+  assert.equal(stats.slashPoints, 0);
+  assert.equal(stats.netLedgerImpact, 153000);
+  assert.equal(stats.estimatedTargetBasePoints, 147000);
+  assert.equal(Math.round(stats.estimatedNetSupportShare * 100), 51);
+});
+
+test("slashes reduce net support contribution without being treated as base score", () => {
+  const handles = ["creator_a", "creator_b"];
+  const target = targetLedger(handles, false);
+  target.totalPoints = 120000;
+  target.entries.push({
+    kind: "slash",
+    authorHandle: "slasher",
+    authorAvatarUrl: null,
+    points: -5000,
+    tweetText: "slash",
+    tweetUrl: null,
+    createdAt: new Date().toISOString(),
+  });
+  const ledgers = independentLedgers(handles);
+  const profiles = buildSupporterProfiles(target, ledgers);
+  const stats = calculateNetworkStats(target, ledgers, profiles);
+
+  assert.equal(stats.vouchPoints, 20500);
+  assert.equal(stats.slashPoints, 5000);
+  assert.equal(stats.netLedgerImpact, 15500);
+  assert.equal(stats.estimatedTargetBasePoints, 104500);
 });
 
 test("closed reciprocal ring produces high coordination risk", () => {
