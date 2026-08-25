@@ -9,7 +9,7 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       VOUCHGUARD_DEMO_MODE: "true"
       NEXT_TELEMETRY_DISABLED: "1"
@@ -32,3 +32,5 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Desktop and mobile UI QA
         run: npm run test:ui
+      - name: Investigate live Commons cases
+        run: node scripts/production-investigation.mjs
